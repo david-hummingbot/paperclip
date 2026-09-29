@@ -167,7 +167,7 @@ The blocking problem is narrower and more concrete than "environments are instan
 | Index | Effect |
 | --- | --- |
 | `environments_name_idx` | `name` is unique **across the whole instance**. Two companies cannot both have an environment called `condor-agent`. |
-| `environments_local_driver_idx` | Exactly **one** `local` environment may exist instance-wide. |
+| `environments_local_driver_idx` | Exactly **one** `local` environment may exist instance-wide. This one is **correct and must stay**: see below. |
 
 ### Decision
 
@@ -181,7 +181,9 @@ Compute placement is per agent and independent of the model connection.
 
 **Local isolation is Docker. A full VM is an SSH target.** The app does not boot a hypervisor.
 
-**Step 0 is the migration, and nothing else can land before it:** add `companyId` and `agentId` to `environments`, re-scope `environments_name_idx` to `(companyId, name)`, and re-scope or drop `environments_local_driver_idx` so one `local` row per company is possible. Until then a second company with a same-named agent fails on a unique violation.
+**Step 0 is the migration, and nothing else can land before it:** add `companyId` and `agentId` to `environments` and re-scope `environments_name_idx` so names are unique per owner. Until then a second company with a same-named agent fails on a unique violation.
+
+**Do not touch `environments_local_driver_idx`.** An earlier draft of this document called for re-scoping it per company. That is wrong. `ensureLocalEnvironment` ignores the `companyId` argument it accepts: the `local` environment is deliberately one instance-level row shared by every company, and the heartbeat inserts it with `ON CONFLICT ("driver") WHERE driver = 'local'`, which only matches an index whose predicate is exactly that. Narrowing the predicate makes the upsert fail with *no unique or exclusion constraint matching the ON CONFLICT specification*, and because `ensureLocalEnvironment` sits on nearly every run path, one broken index takes out most of the heartbeat suite. A per-agent computer is a `docker` or `ssh` row, never `local`, so this index was never in the way.
 
 Docker:
 
@@ -311,7 +313,7 @@ The condor agent can be reviewing a condor pull request, editing its worktree in
 
 In dependency order. New code, and only this:
 
-1. **Environment ownership migration.** `companyId` and `agentId` on `environments`; re-scope `environments_name_idx` to `(companyId, name)`; re-scope or drop `environments_local_driver_idx`. Blocks everything in Feature 2.
+1. **Environment ownership migration.** `companyId` and `agentId` on `environments`; re-scope `environments_name_idx` so names are unique per owner. Leave `environments_local_driver_idx` alone. Blocks everything in Feature 2.
 2. **Provider record migration.** Replace `ai_connection_defaults_provider_check` with a form that admits new providers; add `wire`, `baseUrl`, `apiKeySecretRef`, and extra headers to the connection record.
 3. Company-scoped provider connection records, plus presets for OpenAI, OpenRouter, Venice, Anthropic, xAI, and `local_openai`. `baseUrl` validation admits loopback and private addresses. Fold the `*_BASE_URL` env passthrough, `PAPERCLIP_OPENCODE_PROVIDERS`, and `PAPERCLIP_CODEX_PROVIDERS` into one precedence order and teach `assertManagedAiProjectAuth` to allow a connection-supplied base URL.
 4. One generic OpenAI-compatible adapter. Existing ACP adapters gain injection of a connection's base URL and key when they can use it.

@@ -37,15 +37,15 @@ export const environments = pgTable(
   (table) => ({
     statusIdx: index("environments_status_idx").on(table.status),
     companyIdx: index("environments_company_idx").on(table.companyId, table.status),
-    // One `local` environment per owner. Upstream allowed exactly one
-    // instance-wide; that stays true for the instance-level row (company_id is
-    // null) and each company may now hold its own.
+    // Unchanged from upstream: exactly one `local` environment instance-wide.
+    // `ensureLocalEnvironment` ignores its companyId argument on purpose — the
+    // local environment is shared across companies, and the heartbeat relies
+    // on `ON CONFLICT ("driver") WHERE driver = 'local'` matching this index
+    // exactly. A per-agent computer is a `docker` or `ssh` row, never `local`,
+    // so this index never stood in the way of agent ownership.
     localDriverIdx: uniqueIndex("environments_local_driver_idx")
       .on(table.driver)
-      .where(sql`${table.driver} = 'local' AND ${table.companyId} IS NULL`),
-    companyLocalDriverIdx: uniqueIndex("environments_company_local_driver_idx")
-      .on(table.companyId, table.driver)
-      .where(sql`${table.driver} = 'local' AND ${table.companyId} IS NOT NULL`),
+      .where(sql`${table.driver} = 'local'`),
     managedSandboxIdx: uniqueIndex("environments_managed_sandbox_idx")
       .on(table.driver)
       .where(

@@ -2000,15 +2000,8 @@
     {
       "idx": 287,
       "version": "7",
-      "when": 1790675035072,
-      "tag": "0287_young_tarot",
-      "breakpoints": true
-    },
-    {
-      "idx": 288,
-      "version": "7",
-      "when": 1790675626583,
-      "tag": "0288_thin_jack_power",
+      "when": 1790679376644,
+      "tag": "0287_steady_blue_marvel",
       "breakpoints": true
     }
   ]

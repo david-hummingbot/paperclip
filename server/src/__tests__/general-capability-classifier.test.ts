@@ -108,15 +108,18 @@ describe("general capability classifier", () => {
     }
   });
 
-  it("defines static capability support for the four drivers", () => {
+  it("defines static capability support for the five drivers", () => {
     expect(Object.keys(ENVIRONMENT_DRIVER_CAPABILITY_SUPPORT).sort()).toEqual([
+      "docker",
       "local",
       "plugin",
       "sandbox",
       "ssh",
     ]);
-    // The two remote provider drivers support the whole capability set; the two
-    // host drivers support none.
+    // The two remote provider drivers support the whole capability set; the
+    // three drivers with no provider capability model support none. `docker`
+    // sits with `local` and `ssh`: it runs commands through `docker exec`, not
+    // through a provider worker.
     expect(ENVIRONMENT_DRIVER_CAPABILITY_SUPPORT.sandbox.supportedCapabilities.size).toBe(
       SANDBOX_CAPABILITY_KEYS.length,
     );
@@ -125,5 +128,6 @@ describe("general capability classifier", () => {
     );
     expect(ENVIRONMENT_DRIVER_CAPABILITY_SUPPORT.local.supportedCapabilities.size).toBe(0);
     expect(ENVIRONMENT_DRIVER_CAPABILITY_SUPPORT.ssh.supportedCapabilities.size).toBe(0);
+    expect(ENVIRONMENT_DRIVER_CAPABILITY_SUPPORT.docker.supportedCapabilities.size).toBe(0);
   });
 });
