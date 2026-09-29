@@ -574,8 +574,36 @@ export const PROJECT_STATUSES = [
 ] as const;
 export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 
-export const ENVIRONMENT_DRIVERS = ["local", "ssh", "sandbox", "plugin"] as const;
+/**
+ * `docker` is a first-class driver rather than a cloud-sandbox plugin: a
+ * sandbox lease is short-lived by design, whereas an agent's container is
+ * created on first use and reused across heartbeats.
+ */
+export const ENVIRONMENT_DRIVERS = ["local", "ssh", "sandbox", "plugin", "docker"] as const;
 export type EnvironmentDriver = (typeof ENVIRONMENT_DRIVERS)[number];
+
+/**
+ * Where an agent's runs execute, independent of which model it talks to.
+ *
+ * `shared` is the default and today's behaviour: no dedicated machine, runs
+ * use the project cwd on the Paperclip host. `docker` is one long-lived
+ * container that belongs to this agent. `ssh` is one existing host — a VPS or
+ * a full virtual machine — shown as this agent's computer.
+ *
+ * Local isolation is Docker; a full VM is an SSH target. Paperclip does not
+ * boot a hypervisor. A git worktree is a checkout, not a computer: it lives on
+ * whichever machine the placement names.
+ */
+export const AGENT_COMPUTE_PLACEMENTS = ["shared", "docker", "ssh"] as const;
+export type AgentComputePlacement = (typeof AGENT_COMPUTE_PLACEMENTS)[number];
+
+/** The environment driver a placement requires, or null when it needs none. */
+export const COMPUTE_PLACEMENT_DRIVER: Readonly<
+  Record<AgentComputePlacement, EnvironmentDriver | null>
+> = Object.freeze({ shared: null, docker: "docker", ssh: "ssh" });
+
+export const COORDINATION_ROOM_STATUSES = ["open", "closed"] as const;
+export type CoordinationRoomStatus = (typeof COORDINATION_ROOM_STATUSES)[number];
 
 export const ENVIRONMENT_STATUSES = ["active", "archived"] as const;
 export type EnvironmentStatus = (typeof ENVIRONMENT_STATUSES)[number];

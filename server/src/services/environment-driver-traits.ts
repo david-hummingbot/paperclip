@@ -1,5 +1,5 @@
 /**
- * The static per-driver traits for the four environment drivers.
+ * The static per-driver traits for the five environment drivers.
  *
  * This module is a dependency leaf: it imports no other service module. It
  * imports one type from `environment-runtime.ts` (`SandboxCapabilityKey`), but
@@ -54,7 +54,7 @@ const ALL_CAPABILITY_SUPPORT: ReadonlySet<SandboxCapabilityKey> = new Set<Sandbo
 ]);
 
 /**
- * The static capability support for the four environment drivers.
+ * The static capability support for the five environment drivers.
  *
  * - `local` runs commands on the host file system with no provider capability
  *   model, so it supports none of the eight capabilities. Every capability
@@ -79,6 +79,11 @@ export const ENVIRONMENT_DRIVER_CAPABILITY_SUPPORT: Record<
   ssh: { driver: "ssh", supportedCapabilities: NO_CAPABILITY_SUPPORT },
   sandbox: { driver: "sandbox", supportedCapabilities: ALL_CAPABILITY_SUPPORT },
   plugin: { driver: "plugin", supportedCapabilities: ALL_CAPABILITY_SUPPORT },
+  // `docker` runs commands in a long-lived container through `docker exec`.
+  // Like `ssh` it has no provider capability model, so it declares none of the
+  // eight capabilities; a later pass can widen this once a consumer reads a
+  // per-container snapshot.
+  docker: { driver: "docker", supportedCapabilities: NO_CAPABILITY_SUPPORT },
 };
 
 /**
@@ -126,11 +131,22 @@ export interface EnvironmentDriverTraits {
 }
 
 /**
- * The static traits for the four environment drivers. See {@link
+ * The static traits for the five environment drivers. See {@link
  * EnvironmentDriverTraits} for what each field means and which consumer reads
  * it.
  */
 export const ENVIRONMENT_DRIVER_TRAITS: Record<EnvironmentDriver, EnvironmentDriverTraits> = {
+  docker: {
+    // One long-lived container per agent. The workspace is realized inside the
+    // container and the run reaches it through `docker exec`, so it is off-host
+    // in exactly the sense `isRemoteExecutionEnvironmentDriver` cares about: a
+    // host-local directory path is not present on the run target.
+    driver: "docker",
+    realizesWorkspace: true,
+    runsWorkspaceOffHost: true,
+    confinesStagedProjects: false,
+    hasLeaseCapabilityModel: false,
+  },
   local: {
     driver: "local",
     realizesWorkspace: true,

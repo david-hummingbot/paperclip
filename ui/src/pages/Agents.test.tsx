@@ -182,6 +182,7 @@ const environmentCapabilities: EnvironmentCapabilities = {
     ssh: "supported",
     sandbox: "supported",
     plugin: "supported",
+    docker: "supported",
   },
   sandboxProviders: {
     fake: {

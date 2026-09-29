@@ -208,6 +208,8 @@ export { chatTelegramDraftIds } from "./chat_telegram_draft_ids.js";
 export { chatGitHubConfigurations, chatGitHubRegistrations, chatGitHubReviews } from "./chat_github.js";
 
 export { aiConnectionDefaults } from "./ai_connection_defaults.js";
+export { aiProviderConnections } from "./ai_provider_connections.js";
+export { coordinationRooms, coordinationRoomMembers } from "./coordination_rooms.js";
 export { aiProviderDefaults } from "./ai_provider_defaults.js";
 export * from "./email.js";
 export { announcementDismissals, announcementPublications } from "./announcement_dismissals.js";

@@ -1996,6 +1996,20 @@
       "when": 1790607525758,
       "tag": "0286_complete_alice",
       "breakpoints": true
+    },
+    {
+      "idx": 287,
+      "version": "7",
+      "when": 1790675035072,
+      "tag": "0287_young_tarot",
+      "breakpoints": true
+    },
+    {
+      "idx": 288,
+      "version": "7",
+      "when": 1790675626583,
+      "tag": "0288_thin_jack_power",
+      "breakpoints": true
     }
   ]
 }

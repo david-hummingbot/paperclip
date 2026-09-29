@@ -81,8 +81,11 @@ export function adapterSupportsRemoteManagedEnvironments(adapterType: string): b
 }
 
 export function supportedEnvironmentDriversForAdapter(adapterType: string): EnvironmentDriver[] {
+  // `docker` runs the adapter through `docker exec`, which is the same
+  // out-of-process execution shape `ssh` and `sandbox` already require, so it
+  // rides on the same adapter capability rather than a separate one.
   return adapterSupportsRemoteManagedEnvironments(adapterType)
-    ? ["local", "ssh", "sandbox"]
+    ? ["local", "ssh", "sandbox", "docker"]
     : ["local"];
 }
 
@@ -134,6 +137,7 @@ export function getAdapterEnvironmentSupport(
       ssh: supportedDrivers.has("ssh") ? "supported" : "unsupported",
       sandbox: supportedDrivers.has("sandbox") ? "supported" : "unsupported",
       plugin: supportedDrivers.has("plugin") ? "supported" : "unsupported",
+      docker: supportedDrivers.has("docker") ? "supported" : "unsupported",
     },
     sandboxProviders,
   };
@@ -195,6 +199,7 @@ export function getEnvironmentCapabilities(
       ssh: "supported",
       sandbox: "supported",
       plugin: "unsupported",
+      docker: "supported",
     },
     sandboxProviders,
   };
