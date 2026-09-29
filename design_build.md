@@ -108,6 +108,19 @@ Two facts make this more than an enum change:
 
 There is also an existing escape hatch that overlaps this feature. `stripAiAuthBindings` in `server/src/services/ai-connection-runtime.ts` deliberately **preserves** `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, and `XAI_BASE_URL` in the agent environment, so an operator can already point a harness at a different endpoint by hand. Meanwhile `assertManagedAiProjectAuth` **rejects** `--api-key`, `--auth-token`, `--config`, and `--settings` overrides whenever a managed AI connection is selected.
 
+Two undocumented per-harness env hatches already do most of what this feature promises, and the feature must subsume them rather than become a third way:
+
+| Hatch | Harness | Shape |
+| --- | --- | --- |
+| `PAPERCLIP_OPENCODE_PROVIDERS` | `opencode_local` | JSON map of provider id to OpenCode provider config (`options.baseURL`, `models`) |
+| `PAPERCLIP_CODEX_PROVIDERS` | `codex_local` | JSON mapping 1:1 onto Codex `[model_providers.<id>]` plus a top-level `model_provider` |
+
+Both accept plain `http://`, expand `{env:VAR}` placeholders server-side, and take a **map**, so several endpoints can be defined at once. Neither is documented anywhere in `doc/` or `README.md`. Their limits are the shape of the problem:
+
+- **One active provider per agent.** An agent has a single `adapterConfig.model`, and there is no per-run or per-task model override anywhere in the codebase. OpenCode selects the provider through the `provider/model` ref; Codex pins one `model_provider`. Several providers can be *defined*, but switching means editing the agent.
+- **Env resolves in two layers** — an environment's `envVars` are the base and the agent's `config.env` overrides (`server/src/routes/agents.ts`). So per-agent endpoints work today; a shared catalog belongs on the environment.
+- **Local models work but are second-class.** LM Studio, Ollama and vLLM all expose an OpenAI-compatible `/v1`, so they run through these hatches, but they get no managed connection: no credential UI, no attribution, no budget binding. OpenRouter, being in the enum, gets all three. Running both systems side by side is the actual mess this feature removes.
+
 ### Decision
 
 Split the credential from the harness. A provider connection is a company-scoped record, not a TypeScript enum.
@@ -121,7 +134,11 @@ Split the credential from the harness. A provider connection is a company-scoped
 | Model discovery | `GET {baseUrl}/models` when the host supports it, otherwise a static list |
 | Extra headers | Optional. OpenRouter referer headers and private gateways use this |
 
-OpenAI, OpenRouter, Venice, Anthropic, and xAI ship as presets: known base URL and wire format. A custom endpoint is the same record with a user-supplied base URL. Adding a vendor does not add a branch in compatibility code.
+OpenAI, OpenRouter, Venice, Anthropic, xAI, and `local_openai` ship as presets: known base URL and wire format. `local_openai` defaults to `http://localhost:1234/v1` with no key and covers LM Studio, Ollama and vLLM, which are the same shape. A custom endpoint is the same record with a user-supplied base URL. Adding a vendor does not add a branch in compatibility code.
+
+**`baseUrl` validation must permit loopback and private addresses.** The announcements feed rejects private destinations through `guardedRemoteHttpFetch`; applying that guard to provider base URLs by reflex would block every local model. A provider endpoint is operator-supplied configuration, not an attacker-supplied URL, so it is validated for scheme and shape only. Note that `localhost` resolves on the agent's computer, not the Paperclip host: a Docker agent needs `host.docker.internal`, an SSH agent needs a reachable address on that host. Surface that in the connection form rather than letting it fail at run time.
+
+**One connection per agent, not a routing table.** A connection record is *the* provider an agent uses, selected on the agent alongside its harness — not a pool the agent picks from per task. Fallback chains, cost-based routing, and cheap-local/hard-remote splits are a separate feature with their own failure semantics; they are explicitly out of scope here. This keeps the record a straight replacement for today's one-model-per-agent reality instead of quietly inventing a router.
 
 The connection's `baseUrl` becomes the **single** source of a custom endpoint. The `*_BASE_URL` env passthrough is the legacy path: keep it working for an agent with no managed connection, and have the connection win when one is selected, so there is one precedence order rather than two. The new generic harness has to be reachable through `assertManagedAiProjectAuth` — that guard treats a caller-supplied endpoint as a conflict today and will block the harness until it learns the difference between an operator override and a connection-supplied base URL.
 
@@ -232,22 +249,25 @@ The session key is **`(companyId, agentId, adapterType, taskKey)`** — the `age
 
 The condor agent's hummingbot room does not resume its hummingbot-api room, and neither replaces its pull-request review session.
 
-#### Concurrency is the open problem
+#### Concurrency: room wakes serialize
 
-This is the part of the design that does not work as written, and it has to be settled before implementation.
+`executionRunId` is stamped per issue under `SELECT … FOR UPDATE`. The room transcript is one issue. Therefore **two member agents cannot hold execution on the room issue at the same time** — a message with no @mention that wakes every member will queue, coalesce, or defer under today's lock, exactly as two wakes for one issue do now.
 
-`executionRunId` is stamped per issue under `SELECT … FOR UPDATE`. The room transcript is one issue. Therefore **two member agents cannot hold execution on the room issue at the same time** — a message with no @mention that "enqueues a heartbeat for every member agent" will serialize, coalesce, or defer under today's lock, exactly as two wakes for one issue do now.
+Three options were considered:
 
-Three options, in order of preference:
+1. **Accept serialization.** Room wakes queue and run one at a time.
+2. **Per-member execution claim.** Replace the single `executionRunId` on the room issue with a claim keyed by `(issueId, agentId)`.
+3. **One transcript issue, N shadow issues.** Each member gets a private execution issue linked to the transcript.
 
-1. **Accept serialization.** Room wakes queue and run one at a time. Simplest, preserves the invariant, and is probably fine for a two- or three-agent room. Document it as the behavior.
-2. **Per-member execution claim.** Replace the single `executionRunId` on the room issue with a claim keyed by `(issueId, agentId)`. This changes an invariant `AGENTS.md` §5.3 protects and needs its own design.
-3. **One transcript issue, N shadow issues.** Each member gets a private execution issue linked to the transcript. Preserves the lock, costs a second issue model.
+**Decision: option 1.** Room wakes serialize on the transcript issue. This preserves the atomic-checkout invariant `AGENTS.md` §5.3 protects, needs no change to the lock, and is adequate for the two- and three-member rooms the workflow above describes. Options 2 and 3 stay available if serialization becomes the bottleneck; neither is worth changing a control-plane invariant for before that is measured.
 
-Until one is chosen, the wake rules below describe intent, not behavior:
+Serialization applies to *runs*, not to trees. Every member's worktree exists concurrently and can hold uncommitted work while another member's run holds the lock.
 
-- A message with no @mention enqueues a heartbeat for every member agent.
+Wake rules:
+
+- A message with no @mention enqueues a heartbeat for every member agent. They execute one at a time, in enqueue order.
 - An @mention enqueues only the named agents.
+- Existing coalesce and defer behavior applies unchanged: a second wake for an agent already executing on the room issue is absorbed, not duplicated.
 
 Repo review keeps running while the agent is also in a room. A hummingbot-api pull request still wakes the hummingbot-api agent alone, on its primary checkout, not on the room workspace.
 
@@ -255,8 +275,8 @@ Repo review keeps running while the agent is also in a room. A hummingbot-api pu
 
 Two control-plane consequences the room model has to answer explicitly:
 
-- **Single-assignee.** `AGENTS.md` §5.3 lists the single-assignee task model as an invariant. State whether the room transcript issue is unassigned, or assigned to one agent while the other members are woken as non-assignees. A reviewer will stop here otherwise.
-- **Budgets fan out.** The budget gate is per agent at claim time. One un-mentioned message in an N-member room produces N claims against N budgets on one issue. Budgets do not simply "stay unchanged" — decide whether a room has its own cap, and show per-room spend on the room screen.
+- **Single-assignee holds.** The room transcript issue stays **unassigned**. Members are woken as non-assignees through the room membership table, so no issue ever carries two assignees and the invariant is untouched. An agent that needs an owned task creates a normal issue from the room.
+- **Budgets fan out.** The budget gate is per agent at claim time. One un-mentioned message in an N-member room produces N claims against N budgets on one issue. Each member's own cap applies as usual; a room does not add a second cap in this pass. Per-room spend is surfaced on the room screen so the fan-out is visible rather than surprising.
 
 Do not model the room as a Slack channel or as Conference Room. Those can bridge in later. The board is where you open the room, pick the agents, create the workspace, and read the thread.
 
@@ -293,12 +313,12 @@ In dependency order. New code, and only this:
 
 1. **Environment ownership migration.** `companyId` and `agentId` on `environments`; re-scope `environments_name_idx` to `(companyId, name)`; re-scope or drop `environments_local_driver_idx`. Blocks everything in Feature 2.
 2. **Provider record migration.** Replace `ai_connection_defaults_provider_check` with a form that admits new providers; add `wire`, `baseUrl`, `apiKeySecretRef`, and extra headers to the connection record.
-3. Company-scoped provider connection records, plus presets for OpenAI, OpenRouter, Venice, Anthropic, and xAI. Fold the `*_BASE_URL` env passthrough into one precedence order and teach `assertManagedAiProjectAuth` to allow a connection-supplied base URL.
+3. Company-scoped provider connection records, plus presets for OpenAI, OpenRouter, Venice, Anthropic, xAI, and `local_openai`. `baseUrl` validation admits loopback and private addresses. Fold the `*_BASE_URL` env passthrough, `PAPERCLIP_OPENCODE_PROVIDERS`, and `PAPERCLIP_CODEX_PROVIDERS` into one precedence order and teach `assertManagedAiProjectAuth` to allow a connection-supplied base URL.
 4. One generic OpenAI-compatible adapter. Existing ACP adapters gain injection of a connection's base URL and key when they can use it.
 5. A Docker environment driver: one long-lived container per agent, `docker exec` for the run, added as a fourth `AdapterExecutionTarget` member.
 6. An agent compute placement: `shared`, `docker`, or `ssh`. SSH key generate-or-paste stays on the secret store.
 7. A primary GitHub repo on the agent.
-8. **Decide the room concurrency option** (serialize / per-member claim / shadow issues) and the room assignment semantics. Then: membership join table, transcript issue, wake rules.
+8. Coordination rooms: membership join table, unassigned transcript issue, serialized wake rules.
 9. A room workspace with one worktree and branch per member, checked out on that agent's existing computer.
 
 Unchanged: heartbeat claim, coalesce, checkout versus execution lock, budget hard-stop, session resume shape, the board as the only dashboard, and `paperclip_runner` as an experimental side path.
