@@ -2,9 +2,9 @@
 
 This document is the Observability contract. It covers the OpenTelemetry
 trace path, the opt-in Sentry error-monitoring path, and two local
-instrumentation contracts; see the
-[Telemetry Data Contract](../packages/shared/src/telemetry/README.md) for the
-separate first-party event system.
+instrumentation contracts. Upstream Paperclip also has a separate first-party
+event system; this fork removed it, so there is no telemetry data contract to
+cross-reference. See rule 7 in `AGENTS.md`.
 
 Paperclip ships with **opt-in** OpenTelemetry auto-instrumentation for the
 server process. When activated it produces **traces only** — no metrics and no

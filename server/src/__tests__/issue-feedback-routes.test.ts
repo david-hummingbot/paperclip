@@ -73,14 +73,6 @@ const mockIssueReferenceService = vi.hoisted(() => ({
 }));
 
 function registerModuleMocks() {
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentTaskCompleted: vi.fn(),
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: vi.fn(() => ({ track: vi.fn() })),
-  }));
 
   vi.doMock("../services/index.js", () => ({
     companyService: () => ({
@@ -153,8 +145,6 @@ async function createApp(actor: Record<string, unknown>) {
 describe("issue feedback trace routes", () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.doUnmock("@paperclipai/shared/telemetry");
-    vi.doUnmock("../telemetry.js");
     vi.doUnmock("../services/index.js");
     vi.doUnmock("../services/environments.js");
     vi.doUnmock("../services/execution-workspaces.js");

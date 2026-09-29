@@ -22,7 +22,6 @@ import { isHeartbeatWakeOnDemandEnabled } from "../../../services/heartbeat-poli
 import { collectDispositionRepairSourceState } from "../../../services/recovery/disposition-repair.js";
 import { legacyDispositionEpisode, legacyDispositionFingerprint } from "../../../services/recovery/legacy-continuation.js";
 import { appendHeartbeatRunEvent } from "../../../services/heartbeat-run-events.js";
-import { emitAgentTaskRun } from "../../../services/agent-task-run-telemetry.js";
 import { issueService } from "../../../services/issues.js";
 import {
   issueTreeControlService,
@@ -748,7 +747,7 @@ export function createPostgresRunDispatchAdapter(
         !run.scheduledRetryAt ||
         new Date(run.scheduledRetryAt).getTime() > now.getTime()
       ) {
-        return { outcome: { outcome: "not_promoted" as const }, telemetryRun: null };
+        return { outcome: { outcome: "not_promoted" as const } };
       }
       const factsResult = await loadGateFacts(
         {
@@ -782,9 +781,8 @@ export function createPostgresRunDispatchAdapter(
                 reason: "Scheduled retry suppressed because the agent no longer exists",
                 errorCode: "agent_not_invokable" as const,
               },
-              telemetryRun: cancelled.run,
             }
-          : { outcome: { outcome: "not_promoted" as const }, telemetryRun: null };
+          : { outcome: { outcome: "not_promoted" as const } };
       }
 
       const gate = decideScheduledRetryGate(factsResult.facts, now);
@@ -817,9 +815,8 @@ export function createPostgresRunDispatchAdapter(
                 reason: gate.reason,
                 errorCode: gate.errorCode,
               },
-              telemetryRun: cancelled.run,
             }
-          : { outcome: { outcome: "not_promoted" as const }, telemetryRun: null };
+          : { outcome: { outcome: "not_promoted" as const } };
       }
 
       const promoted = await promoteDueRetryInTx(tx as unknown as Db, {
@@ -833,23 +830,14 @@ export function createPostgresRunDispatchAdapter(
               outcome: "promoted" as const,
               postCommitEffects: promoted.postCommitEffects,
             },
-            telemetryRun: null,
           }
-        : { outcome: { outcome: "not_promoted" as const }, telemetryRun: null };
+        : { outcome: { outcome: "not_promoted" as const } };
     };
     const transactionResult = await withIssueThenRunLocks(
       input,
-      () => ({ outcome: { outcome: "not_promoted" as const }, telemetryRun: null }),
+      () => ({ outcome: { outcome: "not_promoted" as const } }),
       promoteLockedRun,
     );
-
-    // Telemetry is best-effort background work; fire it only after the
-    // transaction above has committed, so a suppressed retry is never
-    // published before its cancellation is durable, and never published at
-    // all if the transaction rolled back.
-    if (transactionResult.telemetryRun) {
-      void emitAgentTaskRun(db, transactionResult.telemetryRun);
-    }
 
     return transactionResult.outcome;
   }

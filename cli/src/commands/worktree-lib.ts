@@ -282,9 +282,6 @@ export function buildWorktreeConfig(input: {
       ...(authPublicBaseUrl ? { publicBaseUrl: authPublicBaseUrl } : {}),
       disableSignUp: source?.auth.disableSignUp ?? false,
     },
-    telemetry: {
-      enabled: source?.telemetry?.enabled ?? true,
-    },
     storage: {
       provider: source?.storage.provider ?? "local_disk",
       localDisk: {

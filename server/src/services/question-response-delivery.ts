@@ -17,7 +17,6 @@ import type {
 } from "@paperclipai/shared";
 import type { PaperclipQuestionResponse } from "../vendor/paperclip-runner/index.js";
 import { isUniqueViolation } from "../db-errors.js";
-import { getTelemetryClient } from "../telemetry.js";
 import { logger } from "../middleware/logger.js";
 import { logActivity } from "./activity-log.js";
 import type { heartbeatService } from "./heartbeat.js";
@@ -566,12 +565,6 @@ export function questionResponseDeliveryService(
         .limit(1)
         .then((rows) => rows[0] ?? null));
     const result: DeliveryRow = persisted ?? input.delivery;
-    if (updated) {
-      getTelemetryClient()?.trackDynamic("question_response.delivery", {
-        adapter: input.adapter,
-        outcome: input.mode ?? "failed",
-      });
-    }
     return {
       deliveryId: result.id,
       status: result.status,

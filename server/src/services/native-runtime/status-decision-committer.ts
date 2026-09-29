@@ -47,7 +47,6 @@ import {
   publishActivity,
   type ActivityPublication,
 } from "../activity-log.js";
-import { emitAgentTaskRun } from "../agent-task-run-telemetry.js";
 
 export class NativeStatusRaceError extends Error {
   readonly code = "native_status_race" as const;
@@ -521,8 +520,6 @@ async function materializeDecisionEffect(input: {
   effect: NativeStatusEffect;
   failpoint?: NativeStatusCommitFailpoint;
   preMaterializedEffects?: ReadonlyMap<string, NativeMaterializedStatusEffect>;
-  /** Terminal heartbeat_runs rows this effect wrote. The caller emits agent.task_run for each, after its transaction commits. */
-  terminalRunsToEmit?: (typeof heartbeatRuns.$inferSelect)[];
 }): Promise<NativeMaterializedStatusEffect> {
   const { effect } = input;
   if (effect.kind === "create_interaction") {
@@ -1051,7 +1048,6 @@ async function materializeDecisionEffect(input: {
       )
       .returning();
     if (!run) throw new Error("native_continuation_cancellation_run_missing");
-    input.terminalRunsToEmit?.push(run);
     return {
       effectKind: effect.kind,
       targetType: "heartbeat_run",
@@ -1548,7 +1544,6 @@ export async function commitNativeStatusDecision(input: {
   }
   const reasonCode = input.decision.reasonCode;
   const publications: ActivityPublication[] = [];
-  const terminalRunsToEmit: (typeof heartbeatRuns.$inferSelect)[] = [];
   const committed = await input.db.transaction(async (tx) => {
     const coordinator = await tx
       .select()
@@ -1852,7 +1847,6 @@ export async function commitNativeStatusDecision(input: {
           effect,
           failpoint: input.failpoint,
           preMaterializedEffects,
-          terminalRunsToEmit,
         }),
       );
     }
@@ -2111,7 +2105,5 @@ export async function commitNativeStatusDecision(input: {
   });
 
   for (const publication of publications) publishActivity(publication);
-  for (const terminalRun of terminalRunsToEmit)
-    await emitAgentTaskRun(input.db, terminalRun);
   return committed;
 }

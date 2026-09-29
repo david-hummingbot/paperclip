@@ -313,12 +313,6 @@ import {
   nativeChatWorkspaceCwd,
   nativeChatWorkspaceMatches,
 } from "./native-runtime/native-chat-workspace.js";
-import { trackAgentFirstHeartbeat } from "@paperclipai/shared/telemetry";
-import { getTelemetryClient } from "../telemetry.js";
-import {
-  emitAgentTaskRun,
-  emitAgentTaskRunById,
-} from "./agent-task-run-telemetry.js";
 import { reportRunFailure } from "./run-failure-report.js";
 import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
@@ -9579,10 +9573,6 @@ export function heartbeatService(
           effect.previousStatus !== effect.status
         ) {
           clearHeartbeatRunRuntimeStatus(effect.runId);
-          void emitAgentTaskRunById(db, {
-            runId: effect.runId,
-            companyId: effect.companyId,
-          });
         }
       }
     }
@@ -12723,21 +12713,20 @@ export function heartbeatService(
     return ensured;
   }
 
-  // Emits agent.task_run for a run write that just reached a terminal
-  // status, unless the write only re-set a status the run already had (a
-  // status-preserving patch, such as a livenessReason update on a run that
-  // finished earlier). Only a genuine transition into a terminal status
-  // emits. The emission runs in the background: it never blocks the
-  // caller's remaining lifecycle work, because emitAgentTaskRun never
-  // throws (it logs and swallows its own failures).
-  function emitTerminalAgentTaskRun(
+  // Settles a run write that just reached a terminal status: clears its
+  // cached runtime status and reports the failure. A write that only re-set a
+  // status the run already had (a status-preserving patch, such as a
+  // livenessReason update on a run that finished earlier) is skipped; only a
+  // genuine transition into a terminal status settles. The failure report runs
+  // in the background so it never blocks the caller's remaining lifecycle
+  // work.
+  function settleTerminalRun(
     updated: typeof heartbeatRuns.$inferSelect,
     previousStatus: string | null,
   ) {
     if (!isHeartbeatRunTerminalStatus(updated.status)) return;
     if (previousStatus === updated.status) return;
     clearHeartbeatRunRuntimeStatus(updated.id);
-    void emitAgentTaskRun(db, updated);
     void reportRunFailure(db, updated);
   }
 
@@ -12802,7 +12791,7 @@ export function heartbeatService(
         payload: buildHeartbeatRunStatusLiveEventPayload(updated),
       });
       publishRunLifecyclePluginEvent(updated);
-      emitTerminalAgentTaskRun(updated, previousStatus?.status ?? null);
+      settleTerminalRun(updated, previousStatus?.status ?? null);
     }
 
     return updated;
@@ -12895,7 +12884,7 @@ export function heartbeatService(
         payload: buildHeartbeatRunStatusLiveEventPayload(updated),
       });
       publishRunLifecyclePluginEvent(updated);
-      emitTerminalAgentTaskRun(updated, previousStatus?.status ?? null);
+      settleTerminalRun(updated, previousStatus?.status ?? null);
       return { run: updated, updated: true as const };
     }
 
@@ -15208,9 +15197,7 @@ export function heartbeatService(
         },
       });
 
-      await finalizeAgentStatus(run.agentId, "interrupted", message, {
-        wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-      });
+      await finalizeAgentStatus(run.agentId, "interrupted", message);
       interruptedRunIds.push(interrupted.id);
     }
 
@@ -16219,7 +16206,7 @@ export function heartbeatService(
       try {
         if (cancelledRun && !scheduled) await releaseIssueExecutionAndPromote(cancelledRun);
       } finally {
-        await finalizeAgentStatus(run.agentId, "cancelled", null, { wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run) });
+        await finalizeAgentStatus(run.agentId, "cancelled", null);
       }
     }
   }
@@ -16332,9 +16319,7 @@ export function heartbeatService(
       );
     }
 
-    await finalizeAgentStatus(run.agentId, "cancelled", null, {
-      wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-    }).catch(() => undefined);
+    await finalizeAgentStatus(run.agentId, "cancelled", null).catch(() => undefined);
   }
 
   async function scheduleInteractionContinuationInfrastructureRetryIfEligible(
@@ -16838,16 +16823,7 @@ export function heartbeatService(
       )
       .returning({ id: agents.id })
       .then((rows) => rows[0] ?? null);
-    if (!claimed) return null;
-    return { wasFirstHeartbeat: !agent.lastHeartbeatAt };
-  }
-
-  function timerClaimWasFirstHeartbeat(
-    run: Pick<typeof heartbeatRuns.$inferSelect, "contextSnapshot">,
-  ): true | undefined {
-    return parseObject(run.contextSnapshot).timerClaimWasFirstHeartbeat === true
-      ? true
-      : undefined;
+    return Boolean(claimed);
   }
 
   function parseMaxTurnContinuationPolicy(
@@ -17725,7 +17701,6 @@ export function heartbeatService(
       publishRunLifecyclePluginEvent(queuedCommentClaim.run);
       // Fire-and-forget: nothing else in this path depends on the emission,
       // so it must not delay the return.
-      void emitAgentTaskRun(db, queuedCommentClaim.run);
       return null;
     }
     const claimed = queuedCommentClaim
@@ -17960,7 +17935,7 @@ export function heartbeatService(
     agentId: string,
     outcome: "succeeded" | "interrupted" | "failed" | "cancelled" | "timed_out",
     failureReason?: string | null,
-    options?: { keepIdleOnFailure?: boolean; wasFirstHeartbeat?: boolean },
+    options?: { keepIdleOnFailure?: boolean },
   ) {
     const existing = await getAgent(agentId);
     if (!existing) return;
@@ -17968,9 +17943,6 @@ export function heartbeatService(
     if (existing.status === "paused" || existing.status === "terminated") {
       return;
     }
-
-    const isFirstHeartbeat =
-      options?.wasFirstHeartbeat ?? !existing.lastHeartbeatAt;
 
     const runningCount = await countRunningRunsForAgent(agentId);
     const nextStatus =
@@ -18000,15 +17972,6 @@ export function heartbeatService(
       .where(eq(agents.id, agentId))
       .returning()
       .then((rows) => rows[0] ?? null);
-
-    if (isFirstHeartbeat && updated) {
-      const tc = getTelemetryClient();
-      if (tc)
-        trackAgentFirstHeartbeat(tc, {
-          agentRole: updated.role,
-          agentId: updated.id,
-        });
-    }
 
     if (updated) {
       publishLiveEvent({
@@ -18830,11 +18793,6 @@ export function heartbeatService(
       input.succeeded
         ? null
         : (settledRun?.error ?? "native_workspace_sync_out_failed"),
-      {
-        wasFirstHeartbeat: settledRun
-          ? timerClaimWasFirstHeartbeat(settledRun)
-          : undefined,
-      },
     ).catch(() => undefined);
   }
 
@@ -19344,9 +19302,7 @@ export function heartbeatService(
         },
       });
 
-      await finalizeAgentStatus(run.agentId, "failed", baseMessage, {
-        wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-      });
+      await finalizeAgentStatus(run.agentId, "failed", baseMessage);
       await startNextQueuedRunForAgent(run.agentId);
       runningProcesses.delete(run.id);
       reaped.push(run.id);
@@ -25479,7 +25435,6 @@ export function heartbeatService(
               ? readHeartbeatRunErrorFamily(finalizedRun) === "provider_quota"
               : runErrorCode === "provider_quota") ||
               isWorkspaceSyncConflictFailure(adapterResult.errorMessage)),
-          wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
         });
       } catch (err) {
         if (err instanceof NativeControllerDetachedForRestartError) {
@@ -25595,7 +25550,6 @@ export function heartbeatService(
               run.agentId,
               "failed",
               `native_${err.reasonCode}`,
-              { wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run) },
             ).catch(() => undefined);
           }
           return;
@@ -25815,7 +25769,6 @@ export function heartbeatService(
         }
 
         await finalizeAgentStatus(agent.id, "failed", message, {
-          wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
           keepIdleOnFailure:
             Boolean(nonRetryablePreflightFailureCode(err)) ||
             isWorkspaceSyncConflictFailure(message),
@@ -26064,7 +26017,6 @@ export function heartbeatService(
         // the run, keep that terminal outcome authoritative.
         if (setupFailureWrite.updated) {
           await finalizeAgentStatus(run.agentId, "failed", message, {
-            wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
             // Low-trust admission failures are task/principal preconditions,
             // not evidence that the immutable endpoint agent is unhealthy.
             // Keep the failed run and its safe provider refusal authoritative,
@@ -26871,8 +26823,6 @@ export function heartbeatService(
       // same issue workspace while the assignee already has a live run.
       const agentNameKey = normalizeAgentNameKey(agent.name);
 
-      const cancelledRunsToEmit: (typeof heartbeatRuns.$inferSelect)[] = [];
-
       const outcome = await db
         .transaction(async (tx) => {
           await tx.execute(
@@ -27491,8 +27441,6 @@ export function heartbeatService(
               .set({ nextEventSeq: eventSeq + 1, updatedAt: now })
               .where(eq(heartbeatRuns.id, cancelled.id));
 
-            cancelledRunsToEmit.push(cancelled);
-
             return true;
           };
 
@@ -27559,7 +27507,6 @@ export function heartbeatService(
               )
               .returning();
             if (cancelled.length > 0) {
-              cancelledRunsToEmit.push(cancelled[0]);
               if (activeExecutionRun.wakeupRequestId) {
                 await tx
                   .update(agentWakeupRequests)
@@ -28249,14 +28196,6 @@ export function heartbeatService(
             return { kind: "deferred" as const };
           throw error;
         });
-
-      // Telemetry for the cancelled runs is best-effort background work.
-      // Fire it here and never await it: none of the lifecycle work below,
-      // nor this function's return, depends on it, so a slow telemetry
-      // lookup must not delay them.
-      for (const cancelledRun of cancelledRunsToEmit) {
-        void emitAgentTaskRun(db, cancelledRun);
-      }
 
       if (outcome.kind === "durable") {
         return outcome.receipt.runId ? getRun(outcome.receipt.runId) : null;
@@ -29220,9 +29159,7 @@ export function heartbeatService(
         await releaseIssueExecutionAndPromote(cancelled, {
           suppressImmediateRecovery: options.suppressImmediateRecovery,
         });
-        await finalizeAgentStatus(run.agentId, "cancelled", undefined, {
-          wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-        });
+        await finalizeAgentStatus(run.agentId, "cancelled", undefined);
         await startNextQueuedRunForAgent(run.agentId);
       }
       return cancelled;
@@ -29824,12 +29761,12 @@ export function heartbeatService(
         ).getTime();
         const elapsedMs = now.getTime() - baseline;
         if (elapsedMs < policy.intervalSec * 1000) continue;
-        const timerClaim = await claimDueTimerHeartbeat(
+        const timerClaimed = await claimDueTimerHeartbeat(
           agent,
           now,
           policy.intervalSec,
         );
-        if (!timerClaim) continue;
+        if (!timerClaimed) continue;
 
         const run = await enqueueWakeup(agent.id, {
           source: "timer",
@@ -29841,7 +29778,6 @@ export function heartbeatService(
             source: "scheduler",
             reason: "interval_elapsed",
             now: now.toISOString(),
-            timerClaimWasFirstHeartbeat: timerClaim.wasFirstHeartbeat,
           },
         });
         if (run) enqueued += 1;

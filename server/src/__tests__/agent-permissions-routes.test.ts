@@ -111,8 +111,6 @@ const mockCompanySkillService = vi.hoisted(() => ({
 }));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockSyncInstructionsBundleConfigFromFilePath = vi.hoisted(() => vi.fn());
 const mockEnsureOpenCodeModelConfiguredAndAvailable = vi.hoisted(() => vi.fn());
 const mockEnvironmentService = vi.hoisted(() => ({
@@ -131,15 +129,6 @@ function registerModuleMocks() {
       ensureOpenCodeModelConfiguredAndAvailable: mockEnsureOpenCodeModelConfiguredAndAvailable,
     };
   });
-
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentCreated: mockTrackAgentCreated,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
 
   vi.doMock("../services/agents.js", () => ({
     agentService: () => mockAgentService,
@@ -333,14 +322,11 @@ describe.sequential("agent permission routes", () => {
     mockCompanySkillService.listRuntimeSkillEntries.mockReset();
     mockCompanySkillService.resolveRequestedSkillKeys.mockReset();
     mockLogActivity.mockReset();
-    mockTrackAgentCreated.mockReset();
-    mockGetTelemetryClient.mockReset();
     mockSyncInstructionsBundleConfigFromFilePath.mockReset();
     mockInstanceSettingsService.getGeneral.mockReset();
     mockEnvironmentService.getById.mockReset();
     mockEnsureOpenCodeModelConfiguredAndAvailable.mockReset();
     mockSyncInstructionsBundleConfigFromFilePath.mockImplementation((_agent, config) => config);
-    mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockAgentService.getById.mockResolvedValue(baseAgent);
     mockAgentService.getConfigRevision.mockResolvedValue(null);
     mockAgentService.listConfigRevisions.mockResolvedValue([]);

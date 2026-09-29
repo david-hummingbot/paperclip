@@ -138,15 +138,6 @@ const mockDb = vi.hoisted(() => ({
   transaction: mockDbTransaction,
 }));
 
-vi.mock("@paperclipai/shared/telemetry", () => ({
-  trackAgentTaskCompleted: vi.fn(),
-  trackErrorHandlerCrash: vi.fn(),
-}));
-
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: vi.fn(() => ({ track: vi.fn() })),
-}));
-
 vi.mock("../services/task-watchdog-scope.js", () => ({
   TASK_WATCHDOG_ORIGIN_KIND: "task_watchdog",
   resolveTaskWatchdogMutationScope: mockResolveTaskWatchdogMutationScope,

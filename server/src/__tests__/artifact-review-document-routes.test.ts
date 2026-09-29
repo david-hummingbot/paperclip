@@ -32,14 +32,6 @@ const mockEnsureForWorkProduct = vi.hoisted(() => vi.fn());
 const mockSyncDocumentSafely = vi.hoisted(() => vi.fn(async () => undefined));
 
 function registerRouteMocks() {
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentTaskCompleted: vi.fn(),
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: vi.fn(() => ({ track: vi.fn() })),
-  }));
 
   vi.doMock("../services/issues.js", () => ({
     issueService: () => mockIssueService,

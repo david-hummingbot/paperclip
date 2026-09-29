@@ -109,7 +109,6 @@ import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
-import { initTelemetry, getTelemetryClient } from "./telemetry.js";
 import { conflict } from "./errors.js";
 import { ensureDecisionSigningSecret } from "./services/decision-signing.js";
 import { createDecisionRetentionNotifyOriginAgent, createDecisionWakeOriginAgent } from "./services/decision-wakeup.js";
@@ -214,7 +213,6 @@ async function startServerWithDatabaseTeardown(
   await sentryReady;
   ensureDecisionSigningSecret();
   let config = loadConfig();
-  initTelemetry({ enabled: config.telemetryEnabled });
   if (process.env.PAPERCLIP_SECRETS_PROVIDER === undefined) {
     process.env.PAPERCLIP_SECRETS_PROVIDER = config.secretsProvider;
   }
@@ -1941,12 +1939,6 @@ async function startServerWithDatabaseTeardown(
         { err: heartbeatShutdown.preparationError, signal },
         "hot-restart shutdown preparation failed; falling back to graceful heartbeat run drain",
       );
-    }
-
-    const telemetryClient = getTelemetryClient();
-    if (telemetryClient) {
-      telemetryClient.stop();
-      await telemetryClient.flush();
     }
 
     if (!skipHeartbeatDrain && drainHeartbeatRunsForShutdown) {

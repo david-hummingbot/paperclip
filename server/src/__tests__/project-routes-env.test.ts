@@ -22,13 +22,8 @@ const mockEnvironmentService = vi.hoisted(() => ({
 }));
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockAccessService = vi.hoisted(() => ({
   decide: vi.fn(),
-}));
-
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: mockGetTelemetryClient,
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -58,9 +53,6 @@ function registerModuleMocks() {
     ...await vi.importActual<typeof import("../services/activity-log.js")>("../services/activity-log.js"),
     persistActivity: async (db: unknown, input: unknown) => { await mockLogActivity(db, input); return { activity: { id: "activity" }, publication: null }; },
     publishActivity: vi.fn(),
-  }));
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
   }));
 
   vi.doMock("../services/index.js", () => ({
@@ -162,7 +154,6 @@ describe("project env routes", () => {
       reason: "allow_test",
       explanation: "Allowed by test mock.",
     });
-    mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockProjectService.resolveByReference.mockResolvedValue({ ambiguous: false, project: null });
     mockProjectService.createWorkspace.mockResolvedValue(null);
     mockProjectService.listWorkspaces.mockResolvedValue([]);

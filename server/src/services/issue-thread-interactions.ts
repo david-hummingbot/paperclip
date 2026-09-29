@@ -34,10 +34,6 @@ import {
   toolActionRequests,
   toolOauthStates,
 } from "@paperclipai/db";
-import {
-  trackInteractionCreated,
-  trackInteractionResolved,
-} from "@paperclipai/shared/telemetry";
 import type {
   AcceptIssueThreadInteraction,
   AskUserQuestionsAnswer,
@@ -92,7 +88,6 @@ import {
 } from "@paperclipai/shared";
 import { z } from "zod";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
-import { getTelemetryClient } from "../telemetry.js";
 import {
   logActivity,
   publishActivity,
@@ -1328,128 +1323,6 @@ function buildInteractionResolvedCounts(
   }
 }
 
-async function fetchCreatorAgentRoleById(
-  db: Pick<Db, "select">,
-  interactions: readonly IssueThreadInteraction[],
-) {
-  const creatorAgentIds = [
-    ...new Set(
-      interactions
-        .map((interaction) => interaction.createdByAgentId)
-        .filter((value): value is string => Boolean(value)),
-    ),
-  ];
-  if (creatorAgentIds.length === 0) return new Map<string, string | null>();
-
-  const rows = await db
-    .select({
-      id: agents.id,
-      role: agents.role,
-    })
-    .from(agents)
-    .where(inArray(agents.id, creatorAgentIds));
-
-  return new Map(rows.map((row) => [row.id, row.role] as const));
-}
-
-async function emitInteractionResolvedTelemetry(
-  db: Pick<Db, "select">,
-  interaction: IssueThreadInteraction,
-  args?: {
-    createdTaskCount?: number;
-    creatorRoleByAgentId?: ReadonlyMap<string, string | null>;
-  },
-) {
-  const telemetryClient = getTelemetryClient();
-  if (!telemetryClient) return;
-
-  try {
-    let roleByAgentId =
-      args?.creatorRoleByAgentId ?? new Map<string, string | null>();
-    if (!args?.creatorRoleByAgentId) {
-      try {
-        roleByAgentId = await fetchCreatorAgentRoleById(db, [interaction]);
-      } catch (error) {
-        console.error(
-          "[paperclip] Failed to load interaction.resolved creator role",
-          error,
-        );
-      }
-    }
-    const creatorAgentRole = interaction.createdByAgentId
-      ? (roleByAgentId.get(interaction.createdByAgentId) ?? undefined)
-      : undefined;
-
-    trackInteractionResolved(telemetryClient, {
-      interactionKind:
-        interaction.kind === "connection_intent" ? "other" : interaction.kind,
-      status: interaction.status,
-      resolvedByKind: resolveActorKind(interaction),
-      resolutionReason: deriveResolutionReason(interaction),
-      createdByKind: resolveCreatorKind(interaction),
-      creatorAgentRole,
-      continuationPolicy: interaction.continuationPolicy,
-      targetType: deriveTargetType(interaction),
-      ...buildInteractionResolvedCounts(interaction, {
-        createdTaskCount: args?.createdTaskCount,
-      }),
-      legacyInheritedRestriction:
-        interaction.resolverPolicyProvenance === "legacy_inherited_restriction",
-    });
-  } catch (error) {
-    console.error(
-      "[paperclip] Failed to emit interaction.resolved telemetry",
-      error,
-    );
-  }
-}
-
-function emitInteractionCreatedTelemetry(args: {
-  interactionKind: IssueThreadInteractionKind;
-  usedDeprecatedResolverPolicyAlias: boolean;
-}) {
-  const telemetryClient = getTelemetryClient();
-  if (!telemetryClient) return;
-
-  try {
-    trackInteractionCreated(telemetryClient, {
-      ...args,
-      interactionKind:
-        args.interactionKind === "connection_intent"
-          ? "other"
-          : args.interactionKind,
-    });
-  } catch (error) {
-    console.error(
-      "[paperclip] Failed to emit interaction.created telemetry",
-      error,
-    );
-  }
-}
-
-async function emitResolvedInteractionsTelemetry(
-  db: Pick<Db, "select">,
-  interactions: readonly IssueThreadInteraction[],
-) {
-  if (interactions.length === 0 || !getTelemetryClient()) return;
-  let roleByAgentId = new Map<string, string | null>();
-  try {
-    roleByAgentId = await fetchCreatorAgentRoleById(db, interactions);
-  } catch (error) {
-    console.error(
-      "[paperclip] Failed to load interaction.resolved creator roles",
-      error,
-    );
-  }
-  await Promise.all(
-    interactions.map((interaction) =>
-      emitInteractionResolvedTelemetry(db, interaction, {
-        creatorRoleByAgentId: roleByAgentId,
-      }),
-    ),
-  );
-}
-
 function isCommentAtOrAfterInteraction(args: {
   commentCreatedAt: Date | string;
   interactionCreatedAt: Date | string;
@@ -1931,7 +1804,6 @@ async function expireStaleRequestConfirmationTarget(
     typeof db.transaction === "function"
       ? await db.transaction(expireInTransaction)
       : await expireInTransaction(db);
-  await emitInteractionResolvedTelemetry(db, expired);
   return expired;
 }
 
@@ -2361,7 +2233,6 @@ export function issueThreadInteractionService(
     });
     for (const publication of postCommitActivityPublications)
       publishActivity(publication);
-    await emitInteractionResolvedTelemetry(db, result.interaction);
     return result;
   }
 
@@ -2537,7 +2408,6 @@ export function issueThreadInteractionService(
     });
 
     const rejected = hydrateInteraction(updated);
-    await emitInteractionResolvedTelemetry(db, rejected);
     return rejected;
   }
 
@@ -2684,10 +2554,6 @@ export function issueThreadInteractionService(
       });
 
       const interaction = hydrateInteraction(created) as ConnectionIntentInteraction;
-      if (inserted) emitInteractionCreatedTelemetry({
-        interactionKind: "connection_intent",
-        usedDeprecatedResolverPolicyAlias: false,
-      });
       return interaction;
     },
     updateConnectionIntentPhase: async (
@@ -2781,7 +2647,6 @@ export function issueThreadInteractionService(
       const interaction = hydrateInteraction(
         updated,
       ) as ConnectionIntentInteraction;
-      await emitInteractionResolvedTelemetry(db, interaction);
       return interaction;
     },
     sweepMergedPullRequestConfirmations: async (
@@ -3214,7 +3079,6 @@ export function issueThreadInteractionService(
       )) {
         await touchIssue(db, issueId);
       }
-      await emitResolvedInteractionsTelemetry(db, cancelled);
       return cancelled;
     },
 
@@ -3302,7 +3166,6 @@ export function issueThreadInteractionService(
         )) {
           await touchIssue(db, issueId);
         }
-        await emitResolvedInteractionsTelemetry(db, expired);
       }
       return { expired: expired.length };
     },
@@ -3699,16 +3562,8 @@ export function issueThreadInteractionService(
 
       await touchIssue(db, issue.id);
       if (superseded.length > 0) {
-        await emitResolvedInteractionsTelemetry(
-          db,
-          superseded.map(hydrateInteraction),
-        );
       }
       const interaction = hydrateInteraction(created);
-      emitInteractionCreatedTelemetry({
-        interactionKind: interaction.kind,
-        usedDeprecatedResolverPolicyAlias,
-      });
       return interaction;
     },
 
@@ -3980,9 +3835,6 @@ export function issueThreadInteractionService(
       });
 
       const accepted = hydrateInteraction(current);
-      await emitInteractionResolvedTelemetry(db, accepted, {
-        createdTaskCount: createdWakeTargets.length,
-      });
       return {
         interaction: accepted,
         createdIssues: createdWakeTargets,
@@ -4151,7 +4003,6 @@ export function issueThreadInteractionService(
 
       if ("terminalError" in submission) throw submission.terminalError;
       if (submission.resolved) {
-        await emitInteractionResolvedTelemetry(db, submission.interaction);
       }
       return submission;
     },
@@ -4207,7 +4058,6 @@ export function issueThreadInteractionService(
 
       await touchIssue(db, issue.id);
       const rejected = hydrateInteraction(updated);
-      await emitInteractionResolvedTelemetry(db, rejected);
       return rejected;
     },
 
@@ -4295,7 +4145,6 @@ export function issueThreadInteractionService(
 
       if (expired.length > 0) {
         await touchIssue(db, issue.id);
-        await emitResolvedInteractionsTelemetry(db, expired);
       }
       return expired;
     },
@@ -4514,7 +4363,6 @@ export function issueThreadInteractionService(
 
       if (expired.length > 0) {
         await touchIssue(db, issue.id);
-        await emitResolvedInteractionsTelemetry(db, expired);
       }
       return expired;
     },
@@ -4608,7 +4456,6 @@ export function issueThreadInteractionService(
 
       if (expired.length > 0) {
         await touchIssue(db, issue.id);
-        await emitResolvedInteractionsTelemetry(db, expired);
       }
       return expired;
     },
@@ -4702,7 +4549,6 @@ export function issueThreadInteractionService(
       }
       if (expired.length > 0) {
         await touchIssue(db, issue.id);
-        await emitResolvedInteractionsTelemetry(db, expired);
       }
       return expired;
     },
@@ -4805,7 +4651,6 @@ export function issueThreadInteractionService(
 
       await touchIssue(db, issue.id);
       const withdrawn = hydrateInteraction(updated);
-      await emitInteractionResolvedTelemetry(db, withdrawn);
       return withdrawn;
     },
 
@@ -4895,7 +4740,6 @@ export function issueThreadInteractionService(
 
       await touchIssue(db, issue.id);
       const answered = hydrateInteraction(updated);
-      await emitInteractionResolvedTelemetry(db, answered);
       return answered;
     },
 
@@ -4985,7 +4829,6 @@ export function issueThreadInteractionService(
 
       await touchIssue(db, issue.id);
       const skipped = hydrateInteraction(updated);
-      await emitInteractionResolvedTelemetry(db, skipped);
       return skipped;
     },
 
@@ -5061,7 +4904,6 @@ export function issueThreadInteractionService(
 
       await touchIssue(db, issue.id);
       const cancelled = hydrateInteraction(updated);
-      await emitInteractionResolvedTelemetry(db, cancelled);
       return cancelled;
     },
   };

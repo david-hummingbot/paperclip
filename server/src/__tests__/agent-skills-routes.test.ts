@@ -59,8 +59,6 @@ const mockSecretService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockSyncInstructionsBundleConfigFromFilePath = vi.hoisted(() => vi.fn());
 
 const mockAdapter = vi.hoisted(() => ({
@@ -74,15 +72,6 @@ function expectResponseId(value: unknown): string {
   expect(value).not.toBe("undefined");
   return String(value);
 }
-
-vi.mock("@paperclipai/shared/telemetry", () => ({
-  trackAgentCreated: mockTrackAgentCreated,
-  trackErrorHandlerCrash: vi.fn(),
-}));
-
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: mockGetTelemetryClient,
-}));
 
 vi.mock("../services/index.js", () => ({
   agentService: () => mockAgentService,
@@ -119,14 +108,6 @@ vi.mock("../adapters/index.js", () => ({
 }));
 
 function registerModuleMocks() {
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentCreated: mockTrackAgentCreated,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
 
   vi.doMock("../services/index.js", () => ({
     agentService: () => mockAgentService,
@@ -261,13 +242,10 @@ describe.sequential("agent skill routes", () => {
     for (const mock of Object.values(mockInstanceSettingsService)) mock.mockReset();
     for (const mock of Object.values(mockSecretService)) mock.mockReset();
     mockLogActivity.mockReset();
-    mockTrackAgentCreated.mockReset();
-    mockGetTelemetryClient.mockReset();
     mockSyncInstructionsBundleConfigFromFilePath.mockReset();
     mockAdapter.listSkills.mockReset();
     mockAdapter.syncSkills.mockReset();
     mockSyncInstructionsBundleConfigFromFilePath.mockImplementation((_agent, config) => config);
-    mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     let persistedAgent: Record<string, unknown> | null = null;
     mockAgentService.resolveByReference.mockResolvedValue({
       ambiguous: false,
@@ -1002,13 +980,6 @@ describe.sequential("agent skill routes", () => {
       }),
       { claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
     );
-    expect(mockTrackAgentCreated).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        agentId: createdAgentId,
-        agentRole: "engineer",
-      }),
-    );
   });
 
   it("rejects version pins when creating an agent while beta skills are disabled", async () => {
@@ -1051,13 +1022,6 @@ describe.sequential("agent skill routes", () => {
         role: "security",
       }),
       { claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
-    );
-    expect(mockTrackAgentCreated).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        agentId: createdAgentId,
-        agentRole: "security",
-      }),
     );
   });
 

@@ -1,0 +1,314 @@
+# Design build
+
+This fork of [paperclipai/paperclip](https://github.com/paperclipai/paperclip) stays the company control plane. New work adds three product seams on top of the existing heartbeat, locks, and adapter boundary. It does not replace the control plane and it does not add a second dashboard.
+
+Origin remote: `david-hummingbot/paperclip`. The tree matches upstream Paperclip except for the telemetry removal recorded under [Base changes already made](#base-changes-already-made).
+
+> **Add the upstream remote before trusting that claim.** Today only `origin` is
+> configured, so nothing can diff this tree against upstream:
+> ```sh
+> git remote add upstream https://github.com/paperclipai/paperclip
+> git fetch upstream
+> ```
+
+## What this system is
+
+Paperclip is the company that agents work in: goals, org chart, tickets, budgets, and governance. Agents wake, do one run, and sleep. Claude Code, Codex, Cursor, OpenClaw, and HTTP bots are employees, not the product.
+
+One Node process serves the API and the React board. Embedded PGlite (Postgres-compatible, in-process) is the default database; set `DATABASE_URL` to use a real Postgres.
+
+| Piece | Where |
+| --- | --- |
+| Server boot and scheduler | `server/src/index.ts` |
+| HTTP app and `/api` routes | `server/src/app.ts` |
+| Heartbeat loop | `server/src/services/heartbeat.ts` |
+| Wake admission | `server/src/modules/wake-queue/` |
+| Schema | `packages/db/src/schema/` |
+| Shared enums | `packages/shared/src/constants.ts` |
+| Adapter contract | `packages/adapter-utils/src/types.ts` |
+| Execution target (where a process runs) | `packages/adapter-utils/src/execution-target.ts` |
+| Board UI | `ui/` |
+
+Newer modules use `domain → application → adapters` under `server/src/modules/`. The heartbeat path is still the large service above. Graft features at the seams below. Do not rewrite `heartbeat.ts` to add a provider, a computer, or a room.
+
+## Base to keep
+
+These behaviors stay as they are:
+
+- Durable wake outbox (`agent_wakeup_requests`) plus run records (`heartbeat_runs`), with coalesce and defer when the same issue and agent are already executing.
+- Two locks on an issue. `checkoutRunId` is the workflow claim. `executionRunId` is stamped only when a run is claimed, under `SELECT … FOR UPDATE`.
+- Adapter contract: the host builds cwd, secrets, skills, tools, session, and task context. The adapter executes and returns usage, cost, a session blob, and an error class.
+- Company-scoped rows. Cross-tenant lookups return 404 (`server/src/routes/authz.ts`).
+- Budget gate at claim time, then pause and cancel when observed spend crosses the policy (`server/src/services/budgets.ts`).
+- Task-keyed session resume on `agent_task_sessions`, with a config fingerprint so model, secret, or workspace changes force a fresh session.
+- Orphan recovery that checks the process is gone before failing a run (`server/src/services/recovery/service.ts`).
+
+A run still resolves connection, computer, cwd, secrets, and skills, then calls `adapter.execute`.
+
+```mermaid
+flowchart TB
+  UI[React board] -->|/api| Server[Paperclip server]
+  Server --> DB[(Postgres)]
+  Server --> Wake[Wake queue]
+  Wake --> Claim[Claim run plus locks]
+  Claim --> Adapter[Adapter execute]
+  Adapter --> Providers[ACP harness or OpenAI-compatible agent]
+  Claim --> Computer[Shared Docker or SSH]
+  Claim --> Cwd[Primary checkout or room worktree]
+```
+
+## Base changes already made
+
+The fork starts from a base with no unprompted outbound network calls. This is a
+prerequisite for the features below, not one of them.
+
+- **First-party telemetry removed.** `packages/shared/src/telemetry/`, `server/src/telemetry.ts`, `cli/src/telemetry.ts`, the `agent-task-run-telemetry` and `connector-telemetry` emitters, the generated event contract, and every call site are gone. Upstream shipped this enabled by default, posting an install UUID plus raw `agent_id`/`model`/`error_code` dimensions to `telemetry.paperclip.ing`. `AGENTS.md` rule 7 now documents two data paths (Observability, run log) instead of three and records the removal so an upstream merge resolves the right way.
+- **Announcements are opt-in.** `PAPERCLIP_ANNOUNCEMENTS_ENABLED=true` turns the feed poll on; unset means no request.
+- **Feedback trace sharing has no default destination.** It uploads only when an operator sets `PAPERCLIP_FEEDBACK_EXPORT_BACKEND_URL` to a host they run.
+- **Plugin `telemetry.track` is a validated no-op.** The SDK capability stays so third-party plugins install and run unchanged; the host drops the event instead of forwarding it. `ctx.logger` and `ctx.metrics` still write to the instance database.
+
+Unchanged and already clean: Sentry has no hardcoded DSN and stays off until `SENTRY_DSN*` is set; OpenTelemetry is a no-op until an OTLP endpoint is set; `ui/index.html` loads no CDN, font, or analytics script.
+
+Two outbound calls remain and are not phone-home to Paperclip: `cli/src/update-notice.ts` checks npm for a newer `paperclipai` (`PAPERCLIP_UPDATE_CHECK=0` disables it), and `ui/src/pages/AdapterManager.tsx` fetches `registry.npmjs.org` **from the browser** for adapter package versions, which exposes the operator's own IP rather than the server's.
+
+## Management UI
+
+The React board is the only management app. `ui/src/pages/Dashboard.tsx` is the overview: counts, spend, run activity, paused agents, and the activity feed. `/dashboard/live` is the live view.
+
+Day-to-day control is `ui/src/components/Sidebar.tsx`. Its actual structure is an ungrouped top block plus two collapsible sections — there is no "Operations" section and no Approvals item:
+
+| Block | Items |
+| --- | --- |
+| Top (ungrouped) | Search, Dashboard, Inbox, Decisions\*, Status\*, Conference Room\* |
+| Work | Tasks, Projects\*, Routines, Artifacts, Cases\*, Pipelines\*, Goals\*, Workspaces\* |
+| Org | Agents, Skills, Connectors, Audit (or Org / Connectors / Timeline / Costs / Activity / Settings in the non-streamlined variant) |
+
+\* Feature-flagged. This matters for the work below: **Projects** needs `streamlinedUiEnabled`, **Workspaces** needs `enableIsolatedWorkspaces` and is hidden by default, and **Conference Room** needs `conferenceRoomChatEnabled`. Environments already live at `company/settings/instance/environments`.
+
+Place new controls on those screens:
+
+| New thing | Screen |
+| --- | --- |
+| Provider connections | Existing AI connection / connector flow |
+| Compute placement | Agent settings, plus the environments screen for hosts, keys, and images |
+| Coordination rooms | Board: open a room, pick agents, create the workspace, read the thread |
+
+If room worktrees are meant to be inspectable, the Workspaces page has to come out from behind its flag, or the room screen has to show them itself.
+
+## Feature 1 — provider catalog
+
+### Current limit
+
+`packages/shared/src/ai-connections.ts` allows only `anthropic`, `openai`, `openrouter`, and `xai`. Each is hard-wired to one harness and one env var. OpenRouter is compatible only with OpenCode and model ids that start with `openrouter/`. ACP is `engine: "acp"` inside the Claude, Codex, Gemini, Kimi, and Grok adapters. The retired `acpx_local` adapter stays a tombstone (`server/src/adapters/registry.ts`). OpenCode can merge a custom OpenAI-compatible provider only through the `PAPERCLIP_OPENCODE_PROVIDERS` env JSON. Venice is not a provider.
+
+Two facts make this more than an enum change:
+
+1. **There is no `ai_connections` table.** An AI connection is a `connection_grants` row (`packages/db/src/schema/tool_access.ts`) carrying `credentialSecretRefs`, with a per-user default in `ai_connection_defaults`. Company scoping and secret storage already exist; the provider identity is what is hard-coded.
+2. **The provider list is also a database CHECK constraint.** `ai_connection_defaults_provider_check` pins `('anthropic','openai','openrouter','xai')` in SQL. A new provider needs a migration, not only a TypeScript edit.
+
+There is also an existing escape hatch that overlaps this feature. `stripAiAuthBindings` in `server/src/services/ai-connection-runtime.ts` deliberately **preserves** `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, and `XAI_BASE_URL` in the agent environment, so an operator can already point a harness at a different endpoint by hand. Meanwhile `assertManagedAiProjectAuth` **rejects** `--api-key`, `--auth-token`, `--config`, and `--settings` overrides whenever a managed AI connection is selected.
+
+### Decision
+
+Split the credential from the harness. A provider connection is a company-scoped record, not a TypeScript enum.
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Display name |
+| `wire` | `openai_chat`, `openai_responses`, `anthropic`, or `acp` |
+| `baseUrl` | API root, for example `https://api.openai.com/v1`, `https://openrouter.ai/api/v1`, `https://api.venice.ai/api/v1`, or any other `/v1` |
+| `apiKeySecretRef` | Key in the existing company secret store |
+| Model discovery | `GET {baseUrl}/models` when the host supports it, otherwise a static list |
+| Extra headers | Optional. OpenRouter referer headers and private gateways use this |
+
+OpenAI, OpenRouter, Venice, Anthropic, and xAI ship as presets: known base URL and wire format. A custom endpoint is the same record with a user-supplied base URL. Adding a vendor does not add a branch in compatibility code.
+
+The connection's `baseUrl` becomes the **single** source of a custom endpoint. The `*_BASE_URL` env passthrough is the legacy path: keep it working for an agent with no managed connection, and have the connection win when one is selected, so there is one precedence order rather than two. The new generic harness has to be reachable through `assertManagedAiProjectAuth` — that guard treats a caller-supplied endpoint as a conflict today and will block the harness until it learns the difference between an operator override and a connection-supplied base URL.
+
+The agent picks a harness separately:
+
+- **ACP harness.** Keep the current Claude, Codex, Gemini, Kimi, and Grok adapters. When the harness can speak OpenAI-compatible HTTP, inject the connection base URL and key. A later step may register an arbitrary ACP command (`command` plus `args`) without a new adapter package per vendor.
+- **Generic OpenAI-compatible harness.** One new adapter. It calls `{baseUrl}/chat/completions` or the Responses API with the Paperclip wake payload and the tool gateway. Venice and OpenRouter are two connections, not two adapters.
+
+Do not route this through `paperclip_runner`. The host still builds secrets, cwd, and session.
+
+**Session side effect.** `adapterType` is part of the session key (see Feature 3). Moving an existing agent onto the generic harness changes its `adapterType` and therefore resets every one of its sessions. Say so in the migration UI; do not let it look like data loss.
+
+## Feature 2 — agent computer
+
+### Current limit
+
+Checkout strategy and machine are different things, and neither is "this agent owns a computer."
+
+- Projects choose `project_primary`, `git_worktree`, `adapter_managed`, or `cloud_sandbox` (`packages/shared/src/validators/project.ts`). That is a directory for a task.
+- `agents.defaultEnvironmentId` points at an environment. Drivers today are `local`, `ssh`, `sandbox`, and `plugin` (`packages/shared/src/constants.ts`, `server/src/services/environment-config.ts`).
+- SSH already stores host, port, username, absolute remote path, `privateKeySecretRef`, known hosts, and strict host key checking. The private key is a secret ref. Probe exists before save.
+- Cloud sandboxes (e2b, Daytona, Modal, Cloudflare, Kubernetes, and others) are short-lease plugins. There is no Docker driver on the Paperclip host.
+
+The blocking problem is narrower and more concrete than "environments are instance-level." `packages/db/src/schema/environments.ts` has **no `companyId`** and two unique indexes that forbid per-agent rows:
+
+| Index | Effect |
+| --- | --- |
+| `environments_name_idx` | `name` is unique **across the whole instance**. Two companies cannot both have an environment called `condor-agent`. |
+| `environments_local_driver_idx` | Exactly **one** `local` environment may exist instance-wide. |
+
+### Decision
+
+Compute placement is per agent and independent of the model connection.
+
+| Placement | Meaning | Mechanism |
+| --- | --- | --- |
+| `shared` | No dedicated machine. Runs use the project cwd on the Paperclip host. | Today's `local` environment plus the project workspace strategy. |
+| `docker` | One long-lived container for this agent. | New first-class driver, not a cloud sandbox plugin. |
+| `ssh` | One existing host. VPS or full VM. | Existing SSH environment config, shown as this agent's computer. |
+
+**Local isolation is Docker. A full VM is an SSH target.** The app does not boot a hypervisor.
+
+**Step 0 is the migration, and nothing else can land before it:** add `companyId` and `agentId` to `environments`, re-scope `environments_name_idx` to `(companyId, name)`, and re-scope or drop `environments_local_driver_idx` so one `local` row per company is possible. Until then a second company with a same-named agent fails on a unique violation.
+
+Docker:
+
+- One container per agent, with its own filesystem, user, and network namespace.
+- Created on first use and reused across heartbeats. A volume holds the home directory and workspaces.
+- Pause stops the container. Terminate removes it.
+- The heartbeat `docker exec`s into the container and runs the adapter there.
+- Image, memory, and CPU limits live on the environment config.
+- No SSH key for the local Docker path.
+
+**Where it plugs in:** `AdapterExecutionTarget` in `packages/adapter-utils/src/execution-target.ts`, today a union of `local | ssh | sandbox` that `runAdapterExecutionTargetProcess` dispatches on. A `docker` target is a fourth member of that union plus a config schema and probe in `server/src/services/environment-config.ts`. It is not a change to `heartbeat.ts`. The reason not to reuse the sandbox-provider plugin path — which already has lease, lifecycle, and duplex-transport machinery — is that those leases are short and the container here is long-lived; state the trade-off in the implementation PR rather than leaving it implicit.
+
+SSH:
+
+- Reuse `sshEnvironmentConfigSchema`: host, port, user, absolute remote workspace path, known hosts, strict host key checking.
+- The same path covers a VPS and a full virtual machine.
+- Generate an ed25519 pair, store the private key as a company secret, and show the public key once so it can be installed on the host. Or paste an existing private key into that same secret slot.
+- Probe the host before the agent is allowed to run.
+
+Dedicated Docker and SSH environments are bound to the company and the agent. Another company cannot select the same host or key.
+
+The computer is the machine. A git worktree is the checkout, and it lives on that computer. Cloud sandbox plugins stay available as they are. They are not a substitute for local Docker or a host you already have.
+
+## Feature 3 — coordination rooms
+
+### Workflow
+
+Standing work is one agent per repo:
+
+- The hummingbot agent reviews hummingbot pull requests and issues.
+- The hummingbot-api agent does the same for hummingbot-api.
+- The condor agent does the same for condor.
+
+Those reviews stay one-to-one. Each agent keeps its own GitHub review path, its own session, and its own primary checkout.
+
+Cross-repo work opens a smaller room for that effort:
+
+- A pull request that must be tested across hummingbot-api and condor gets a room with those two agents and you. The hummingbot agent is not a member.
+- A task that touches condor and hummingbot gets a different room with those two agents. The condor agent is in both rooms. The hummingbot-api agent is only in the first.
+
+### Current limit
+
+Nothing in the product is that room.
+
+- A project can list several GitHub repos (`doc/project-repositories.md`) and has one lead agent, not one agent per repo.
+- Agent chat is one person and one agent (`doc/plans/2026-09-10-agent-chat.md`).
+- Conference Room is one company concierge, gated to `local_trusted` single-operator instances (`server/src/routes/board-chat.ts`).
+- Slack, Discord, Teams, Telegram, GitHub, iMessage, and AgentMail each bind one endpoint to one agent (`chat_endpoints.assignedAgentId` in `packages/db/src/schema/chat_channels.ts`). One bot can join many external channels. Two agents in one channel means two bots, with no membership list inside Paperclip.
+- Issue comments and @mentions are a task thread, not a reusable room.
+
+### Decision
+
+Two bindings, kept separate.
+
+1. **Repo agent.** An agent has a primary GitHub repo. Review for that repo wakes that agent on its own session and its own computer. This does not require a room.
+2. **Coordination room.** A company-scoped room with a member list. Optional link to a project and to the repos the effort touches. Opening a room from those repos pre-fills the agents that own them. Members can still be added or removed by hand.
+
+Membership is a join table. An agent may belong to many rooms. It is not a single `conversationAgentId`.
+
+The transcript is one issue, so comments and the existing chat UI stay.
+
+#### Session isolation comes for free
+
+The session key is **`(companyId, agentId, adapterType, taskKey)`** — the `agent_task_sessions_company_agent_adapter_task_uniq` index. `deriveTaskKey` in `heartbeat.ts` falls back to `contextSnapshot.issueId`, so when the room transcript is an issue, each member already gets a distinct session per room with no new key to build. Do not invent a room-session table; set the room issue as the wake context and the existing key does the work.
+
+The condor agent's hummingbot room does not resume its hummingbot-api room, and neither replaces its pull-request review session.
+
+#### Concurrency is the open problem
+
+This is the part of the design that does not work as written, and it has to be settled before implementation.
+
+`executionRunId` is stamped per issue under `SELECT … FOR UPDATE`. The room transcript is one issue. Therefore **two member agents cannot hold execution on the room issue at the same time** — a message with no @mention that "enqueues a heartbeat for every member agent" will serialize, coalesce, or defer under today's lock, exactly as two wakes for one issue do now.
+
+Three options, in order of preference:
+
+1. **Accept serialization.** Room wakes queue and run one at a time. Simplest, preserves the invariant, and is probably fine for a two- or three-agent room. Document it as the behavior.
+2. **Per-member execution claim.** Replace the single `executionRunId` on the room issue with a claim keyed by `(issueId, agentId)`. This changes an invariant `AGENTS.md` §5.3 protects and needs its own design.
+3. **One transcript issue, N shadow issues.** Each member gets a private execution issue linked to the transcript. Preserves the lock, costs a second issue model.
+
+Until one is chosen, the wake rules below describe intent, not behavior:
+
+- A message with no @mention enqueues a heartbeat for every member agent.
+- An @mention enqueues only the named agents.
+
+Repo review keeps running while the agent is also in a room. A hummingbot-api pull request still wakes the hummingbot-api agent alone, on its primary checkout, not on the room workspace.
+
+#### Assignment and budgets
+
+Two control-plane consequences the room model has to answer explicitly:
+
+- **Single-assignee.** `AGENTS.md` §5.3 lists the single-assignee task model as an invariant. State whether the room transcript issue is unassigned, or assigned to one agent while the other members are woken as non-assignees. A reviewer will stop here otherwise.
+- **Budgets fan out.** The budget gate is per agent at claim time. One un-mentioned message in an N-member room produces N claims against N budgets on one issue. Budgets do not simply "stay unchanged" — decide whether a room has its own cap, and show per-room spend on the room screen.
+
+Do not model the room as a Slack channel or as Conference Room. Those can bridge in later. The board is where you open the room, pick the agents, create the workspace, and read the thread.
+
+### Room workspace
+
+A room can create a workspace for the effort, separate from each agent's everyday checkout.
+
+For an api-and-condor room, the workspace checks out hummingbot-api and condor together, using the multi-repo layout projects already use (`metadata.githubRepositoryId` workspaces; see `doc/project-repositories.md`). The hummingbot agent's primary checkout is not included. Creating the room workspace does not move or reset anyone's primary checkout.
+
+Members work in that workspace at the same time, each on their own tree:
+
+- The room workspace is the shared integration tree.
+- Each member gets their own git worktree and branch. The condor agent's worktree is not the hummingbot-api agent's worktree.
+- A room wake sets that agent's cwd to their worktree. The session key already isolates per room, so this cwd does not replace the primary-repo review workspace.
+- The agent's computer does not change. A Docker or SSH agent runs the worktree on that computer. A shared agent runs it on the Paperclip host. The room does not allocate a second machine.
+
+Worktrees may exist concurrently regardless of which concurrency option above is chosen; only *runs* are gated by the issue lock.
+
+Closing the room leaves primary checkouts in place. Room worktrees can be removed with the room. Unmerged branches stay until they are deleted.
+
+## Worked example
+
+| Effort | Members | Workspace | Session |
+| --- | --- | --- | --- |
+| hummingbot pull request review | hummingbot agent | That agent's primary hummingbot checkout | Agent's review session |
+| hummingbot-api and condor test | hummingbot-api agent, condor agent | Room checkout of both repos; one worktree per agent | `taskKey` = this room's issue, per agent |
+| condor and hummingbot task | condor agent, hummingbot agent | A second room checkout of those two repos; one worktree per agent | `taskKey` = the other room's issue, per agent |
+
+The condor agent can be reviewing a condor pull request, editing its worktree in the api room, and editing a different worktree in the hummingbot room. Those three cwds and sessions stay distinct. If the condor agent is on Docker or SSH, all three trees live on that computer.
+
+## Build list
+
+In dependency order. New code, and only this:
+
+1. **Environment ownership migration.** `companyId` and `agentId` on `environments`; re-scope `environments_name_idx` to `(companyId, name)`; re-scope or drop `environments_local_driver_idx`. Blocks everything in Feature 2.
+2. **Provider record migration.** Replace `ai_connection_defaults_provider_check` with a form that admits new providers; add `wire`, `baseUrl`, `apiKeySecretRef`, and extra headers to the connection record.
+3. Company-scoped provider connection records, plus presets for OpenAI, OpenRouter, Venice, Anthropic, and xAI. Fold the `*_BASE_URL` env passthrough into one precedence order and teach `assertManagedAiProjectAuth` to allow a connection-supplied base URL.
+4. One generic OpenAI-compatible adapter. Existing ACP adapters gain injection of a connection's base URL and key when they can use it.
+5. A Docker environment driver: one long-lived container per agent, `docker exec` for the run, added as a fourth `AdapterExecutionTarget` member.
+6. An agent compute placement: `shared`, `docker`, or `ssh`. SSH key generate-or-paste stays on the secret store.
+7. A primary GitHub repo on the agent.
+8. **Decide the room concurrency option** (serialize / per-member claim / shadow issues) and the room assignment semantics. Then: membership join table, transcript issue, wake rules.
+9. A room workspace with one worktree and branch per member, checked out on that agent's existing computer.
+
+Unchanged: heartbeat claim, coalesce, checkout versus execution lock, budget hard-stop, session resume shape, the board as the only dashboard, and `paperclip_runner` as an experimental side path.
+
+## Definition of done
+
+Each feature crosses `packages/db` → `packages/shared` → `server` → `ui`, so per `AGENTS.md` §11 none is done until all four are synced. For each one:
+
+- Migration generated with `pnpm db:generate` and the new table exported from `packages/db/src/schema/index.ts`.
+- `pnpm -r typecheck`, `pnpm test:run`, `pnpm build` green. Note the two known baseline failures: `packages/paperclip-runner` typecheck needs a Rust toolchain (`cargo`), and `tsc` reports eleven pre-existing `'committed' is possibly 'undefined'` errors under `server/src/services/native-runtime/`.
+- `pnpm check:token-gates` for any `ui/` change.
+- PR body filled in from `.github/PULL_REQUEST_TEMPLATE.md`, all sections.
+- No new default outbound endpoint. A new adapter or driver that calls out must do so only to a host the operator configured.

@@ -44,7 +44,6 @@ import {
   readNativeBoardResponseWaitOrigin,
   readNativeBoardResponseWaitSource,
 } from "./native-board-response-wait.js";
-import { emitAgentTaskRun } from "../agent-task-run-telemetry.js";
 import { reportRunFailure } from "../run-failure-report.js";
 import { resolveExternalChatResponseWaitAuthorization } from "./chat-attachment-reuse.js";
 import {
@@ -530,7 +529,6 @@ async function recordRetryableFailure(input: {
     };
   });
   if (terminalRunToEmit) {
-    await emitAgentTaskRun(input.db, terminalRunToEmit);
     void reportRunFailure(input.db, terminalRunToEmit);
   }
   return {
@@ -702,7 +700,6 @@ async function projectCommittedRun(input: {
   // Metadata repairs can preserve the terminal status. Only a genuine status
   // transition should emit another terminal event.
   if (updatedRun && updatedRun.status !== input.run.status) {
-    await emitAgentTaskRun(input.db, updatedRun);
     void reportRunFailure(input.db, updatedRun);
   }
 }
@@ -1422,7 +1419,6 @@ export async function finalizeNativeRun(input: {
         !alreadyEmittedByCommittedDecision &&
         updatedRun
       ) {
-        await emitAgentTaskRun(input.db, updatedRun);
         void reportRunFailure(input.db, updatedRun);
       }
       if (input.projectRunStatus)

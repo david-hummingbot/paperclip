@@ -2,8 +2,6 @@ import { gzipSync } from "node:zlib";
 import type { FeedbackTraceBundle } from "@paperclipai/shared";
 import type { Config } from "../config.js";
 
-const DEFAULT_FEEDBACK_EXPORT_BACKEND_URL = "https://telemetry.paperclip.ing";
-
 function buildFeedbackShareObjectKey(bundle: FeedbackTraceBundle, exportedAt: Date) {
   const year = String(exportedAt.getUTCFullYear());
   const month = String(exportedAt.getUTCMonth() + 1).padStart(2, "0");
@@ -15,10 +13,18 @@ export interface FeedbackTraceShareClient {
   uploadTraceBundle(bundle: FeedbackTraceBundle): Promise<{ objectKey: string }>;
 }
 
+/**
+ * Returns `undefined` when no export backend is configured. This fork ships no
+ * default destination, so feedback traces stay in the instance database unless
+ * an operator points `PAPERCLIP_FEEDBACK_EXPORT_BACKEND_URL` at a host they
+ * run. `flushPendingFeedbackTraces` already handles a missing client by
+ * marking rows with the "backend not configured" reason.
+ */
 export function createFeedbackTraceShareClientFromConfig(
   config: Pick<Config, "feedbackExportBackendUrl" | "feedbackExportBackendToken">,
-): FeedbackTraceShareClient {
-  const baseUrl = config.feedbackExportBackendUrl?.trim() || DEFAULT_FEEDBACK_EXPORT_BACKEND_URL;
+): FeedbackTraceShareClient | undefined {
+  const baseUrl = config.feedbackExportBackendUrl?.trim();
+  if (!baseUrl) return undefined;
   const token = config.feedbackExportBackendToken?.trim();
   const endpoint = new URL("/feedback-traces", baseUrl).toString();
 

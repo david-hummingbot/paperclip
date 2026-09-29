@@ -492,19 +492,26 @@ Paperclip also ships with opt-in Sentry error monitoring for the server and the 
 
 ## Telemetry
 
-Paperclip collects anonymous usage telemetry to help us understand how the product is used and improve it. No personal information, issue content, prompts, file paths, or secrets are ever collected. Private repository references are hashed with a per-install salt before being sent.
+**This fork ships no usage telemetry.** The first-party telemetry client, its
+event contract, and its network egress were removed; there is no `installId`,
+no event queue, and no default reporting endpoint anywhere in the tree. A stock
+instance makes no outbound request to any Paperclip-operated host.
 
-Contributors changing emitted telemetry events should follow the [Telemetry Data Contract](packages/shared/src/telemetry/README.md).
-For proposed first-party events that are not in the generated contract yet, follow [Telemetry Workflow](doc/TELEMETRY_WORKFLOW.md).
+`PAPERCLIP_TELEMETRY_DISABLED` and `DO_NOT_TRACK` are accepted by nothing
+because nothing reads them; setting them is harmless but unnecessary. A
+`telemetry` key left in an existing config file is ignored rather than rejected.
 
-Telemetry is **enabled by default** and can be disabled with any of the following:
+Two outbound paths remain, both off unless you turn them on:
 
-| Method               | How                                                     |
-| -------------------- | ------------------------------------------------------- |
-| Environment variable | `PAPERCLIP_TELEMETRY_DISABLED=1`                        |
-| Standard convention  | `DO_NOT_TRACK=1`                                        |
-| CI environments      | Automatically disabled when `CI=true`                   |
-| Config file          | Set `telemetry.enabled: false` in your Paperclip config |
+| Path                   | Default | Turn on with                                              |
+| ---------------------- | ------- | --------------------------------------------------------- |
+| In-app announcements   | off     | `PAPERCLIP_ANNOUNCEMENTS_ENABLED=true`                      |
+| Feedback trace sharing | off     | `PAPERCLIP_FEEDBACK_EXPORT_BACKEND_URL=<a host you run>`    |
+
+Plugins may still declare the `telemetry.track` capability so they install and
+run unchanged, but the host validates the event name and drops it — it is not
+forwarded anywhere. Plugins that need a durable record should use `ctx.logger`
+or `ctx.metrics`, which write to the instance database.
 
 ## Contributing
 

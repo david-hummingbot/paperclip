@@ -80,8 +80,6 @@ const mockCatalogService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockTrackSkillImported = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockReflectionCoachMutationGate = vi.hoisted(() => ({
   assertConsented: vi.fn(),
 }));
@@ -132,15 +130,6 @@ function denySkillPolicy(action = "skills.import") {
 
 function registerModuleMocks() {
   vi.doMock("../routes/authz.js", async () => vi.importActual("../routes/authz.js"));
-
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackSkillImported: mockTrackSkillImported,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
 
   vi.doMock("../services/access.js", () => ({
     accessService: () => mockAccessService,
@@ -220,7 +209,6 @@ describe("company skill mutation permissions", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockCompanySkillService.importFromSource.mockResolvedValue({
       imported: [],
       warnings: [],
@@ -1351,10 +1339,6 @@ describe("company skill mutation permissions", () => {
       .send({ source: "https://github.com/vercel-labs/agent-browser" });
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
-    expect(mockTrackSkillImported).toHaveBeenCalledWith(expect.anything(), {
-      sourceType: "github",
-      skillRef: "vercel-labs/agent-browser/find-skills",
-    });
   });
 
   it("does not expose a skill reference for non-public skill imports", async () => {
@@ -1397,10 +1381,6 @@ describe("company skill mutation permissions", () => {
       .send({ source: "https://ghe.example.com/acme/private-skill" });
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
-    expect(mockTrackSkillImported).toHaveBeenCalledWith(expect.anything(), {
-      sourceType: "github",
-      skillRef: null,
-    });
   });
 
   it("does not expose a skill reference when GitHub metadata is missing", async () => {
@@ -1439,10 +1419,6 @@ describe("company skill mutation permissions", () => {
       .send({ source: "https://github.com/acme/private-skill" });
 
     expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
-    expect(mockTrackSkillImported).toHaveBeenCalledWith(expect.anything(), {
-      sourceType: "github",
-      skillRef: null,
-    });
   });
 
   it("allows same-company agents without skill change grants when no explicit policy exists", async () => {

@@ -130,20 +130,9 @@ const mockAccessService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockTrackRoutineCreated = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 
 function registerModuleMocks() {
   vi.doMock("../routes/authz.js", async () => vi.importActual("../routes/authz.js"));
-
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackRoutineCreated: mockTrackRoutineCreated,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
 
   vi.doMock("../services/access.js", () => ({
     accessService: () => mockAccessService,
@@ -196,8 +185,6 @@ describe("routine routes", () => {
 
   beforeEach(() => {
     vi.resetModules();
-    vi.doUnmock("@paperclipai/shared/telemetry");
-    vi.doUnmock("../telemetry.js");
     vi.doUnmock("../services/access.js");
     vi.doUnmock("../services/index.js");
     vi.doUnmock("../services/activity-log.js");
@@ -207,7 +194,6 @@ describe("routine routes", () => {
     vi.doUnmock("../middleware/index.js");
     registerModuleMocks();
     vi.clearAllMocks();
-    mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockRoutineService.list.mockResolvedValue([routine]);
     mockRoutineService.create.mockResolvedValue(routine);
     mockRoutineService.get.mockResolvedValue(routine);
@@ -681,6 +667,5 @@ describe("routine routes", () => {
       userId: "board-user",
       runId: null,
     });
-    expect(mockTrackRoutineCreated).toHaveBeenCalledWith(expect.anything());
   });
 });

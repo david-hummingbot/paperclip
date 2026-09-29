@@ -34,15 +34,6 @@ const mockGoalService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
-
-vi.mock("@paperclipai/shared/telemetry", () => ({
-  trackGoalCreated: vi.fn(),
-}));
-
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: mockGetTelemetryClient,
-}));
 
 vi.mock("../services/index.js", () => ({
   goalService: () => mockGoalService,
@@ -113,7 +104,6 @@ function resetMocks() {
   mockGoalService.update.mockImplementation(async () => ({ ...baseGoal }));
   mockGoalService.remove.mockImplementation(async () => ({ ...baseGoal }));
   mockLogActivity.mockImplementation(async () => undefined);
-  mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
 }
 
 describe.sequential("write-path membership checks (viewer / inactive)", () => {

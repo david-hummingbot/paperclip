@@ -165,14 +165,6 @@ const mockRetryWorkspaceExport = vi.hoisted(() => vi.fn());
 
 function registerRouteMocks() {
   vi.doMock("../services/native-runtime/native-workspace-export-retry.js", () => ({ retryNativeWorkspaceExport: mockRetryWorkspaceExport }));
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackAgentTaskCompleted: vi.fn(),
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: vi.fn(() => ({ track: vi.fn() })),
-  }));
 
   vi.doMock("../services/access.js", () => ({
     accessService: () => mockAccessService,

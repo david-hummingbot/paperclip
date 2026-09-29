@@ -99,10 +99,6 @@ export const secretsConfigSchema = z.object({
   }),
 }).passthrough();
 
-export const telemetryConfigSchema = z.object({
-  enabled: z.boolean().default(true),
-}).passthrough().prefault({});
-
 export const updatesConfigSchema = z.object({
   checkEnabled: z.boolean().default(true),
 }).passthrough().prefault({});
@@ -114,7 +110,6 @@ export const paperclipConfigSchema = z
     database: databaseConfigSchema,
     logging: loggingConfigSchema,
     server: serverConfigSchema,
-    telemetry: telemetryConfigSchema,
     updates: updatesConfigSchema.optional(),
     auth: authConfigSchema.default({
       baseUrlMode: "auto",
@@ -200,7 +195,6 @@ export type StorageS3Config = z.infer<typeof storageS3ConfigSchema>;
 export type SecretsConfig = z.infer<typeof secretsConfigSchema>;
 export type SecretsLocalEncryptedConfig = z.infer<typeof secretsLocalEncryptedConfigSchema>;
 export type AuthConfig = z.infer<typeof authConfigSchema>;
-export type TelemetryConfig = z.infer<typeof telemetryConfigSchema>;
 export type UpdatesConfig = z.infer<typeof updatesConfigSchema>;
 export type ConfigMeta = z.infer<typeof configMetaSchema>;
 export type DatabaseBackupConfig = z.infer<typeof databaseBackupConfigSchema>;

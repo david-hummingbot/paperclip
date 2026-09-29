@@ -950,10 +950,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
     expect(results.reduce((total, result) => total + result.enqueued, 0)).toBe(1);
 
     const runs = await db
-      .select({
-        id: heartbeatRuns.id,
-        contextSnapshot: heartbeatRuns.contextSnapshot,
-      })
+      .select({ id: heartbeatRuns.id })
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.agentId, agentId));
     const [agent] = await db
@@ -962,9 +959,6 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       .where(eq(agents.id, agentId));
 
     expect(runs).toHaveLength(1);
-    expect(runs[0]?.contextSnapshot).toMatchObject({
-      timerClaimWasFirstHeartbeat: true,
-    });
     expect(agent?.lastHeartbeatAt?.getTime()).toBeGreaterThanOrEqual(now.getTime());
   });
 

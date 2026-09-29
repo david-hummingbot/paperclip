@@ -42,20 +42,6 @@ const mockAdapterExecute = vi.hoisted(() =>
   })),
 );
 
-vi.mock("../telemetry.ts", () => ({
-  getTelemetryClient: () => ({ track: vi.fn() }),
-}));
-
-vi.mock("@paperclipai/shared/telemetry", async () => {
-  const actual = await vi.importActual<typeof import("@paperclipai/shared/telemetry")>(
-    "@paperclipai/shared/telemetry",
-  );
-  return {
-    ...actual,
-    trackAgentFirstHeartbeat: vi.fn(),
-  };
-});
-
 vi.mock("../adapters/index.ts", async () => {
   const actual = await vi.importActual<typeof import("../adapters/index.ts")>("../adapters/index.ts");
   return {

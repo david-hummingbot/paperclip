@@ -1,11 +1,9 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { createGoalSchema, updateGoalSchema } from "@paperclipai/shared";
-import { trackGoalCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import { goalService, logActivity } from "../services/index.js";
 import { assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
-import { getTelemetryClient } from "../telemetry.js";
 
 export function goalRoutes(db: Db) {
   const router = Router();
@@ -40,10 +38,6 @@ export function goalRoutes(db: Db) {
       entityId: goal.id,
       details: { title: goal.title },
     });
-    const telemetryClient = getTelemetryClient();
-    if (telemetryClient) {
-      trackGoalCreated(telemetryClient, { goalLevel: goal.level });
-    }
     res.status(201).json(goal);
   });
 

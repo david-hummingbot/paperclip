@@ -106,16 +106,6 @@ const mockCompanySkillService = vi.hoisted(() => ({
 
 const mockWorkspaceOperationService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
-
-vi.mock("@paperclipai/shared/telemetry", () => ({
-  trackAgentCreated: vi.fn(),
-  trackErrorHandlerCrash: vi.fn(),
-}));
-
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: mockGetTelemetryClient,
-}));
 
 vi.mock("../routes/authz.js", async () => {
   const { forbidden, unauthorized } = await vi.importActual<typeof import("../errors.js")>("../errors.js");
@@ -297,8 +287,6 @@ function resetMockDefaults() {
   for (const mock of Object.values(mockAgentInstructionsService)) mock.mockReset();
   for (const mock of Object.values(mockCompanySkillService)) mock.mockReset();
   mockLogActivity.mockReset();
-  mockGetTelemetryClient.mockReset();
-  mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
   currentKeyAgentId = agentId;
   currentAccessCanUser = false;
   mockAgentService.getById.mockImplementation(async () => ({ ...baseAgent }));

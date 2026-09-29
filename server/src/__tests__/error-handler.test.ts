@@ -5,10 +5,6 @@ import { errorHandler } from "../middleware/error-handler.js";
 
 const recordResponsibleUserDenialOnActiveRunMock = vi.hoisted(() => vi.fn());
 const captureExceptionMock = vi.hoisted(() => vi.fn());
-const telemetryMocks = vi.hoisted(() => ({
-  client: {},
-  trackErrorHandlerCrash: vi.fn(),
-}));
 
 vi.mock("../services/responsible-user-denial-run-outcomes.js", () => ({
   recordResponsibleUserDenialOnActiveRun:
@@ -16,12 +12,6 @@ vi.mock("../services/responsible-user-denial-run-outcomes.js", () => ({
 }));
 
 vi.mock("../sentry.js", () => ({ captureException: captureExceptionMock }));
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: () => telemetryMocks.client,
-}));
-vi.mock("@paperclipai/shared/telemetry", () => ({
-  trackErrorHandlerCrash: telemetryMocks.trackErrorHandlerCrash,
-}));
 
 function makeReq(): Request {
   return {
@@ -47,7 +37,6 @@ describe("errorHandler", () => {
     recordResponsibleUserDenialOnActiveRunMock.mockReset();
     recordResponsibleUserDenialOnActiveRunMock.mockResolvedValue(null);
     captureExceptionMock.mockReset();
-    telemetryMocks.trackErrorHandlerCrash.mockReset();
   });
 
   it("attaches the original Error to res.err for 500s", () => {
@@ -79,7 +68,6 @@ describe("errorHandler", () => {
     expect(res.end).toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
     expect(captureExceptionMock).not.toHaveBeenCalled();
-    expect(telemetryMocks.trackErrorHandlerCrash).not.toHaveBeenCalled();
   });
 
   it("exposes raw 500 messages for trusted Cloud tenant imports", () => {
@@ -148,13 +136,6 @@ describe("errorHandler", () => {
     expect(JSON.stringify(captureExceptionMock.mock.calls)).not.toContain(
       "setup-error-token-canary",
     );
-    expect(telemetryMocks.trackErrorHandlerCrash).toHaveBeenCalledWith(
-      telemetryMocks.client,
-      { errorCode: "Error" },
-    );
-    expect(
-      JSON.stringify(telemetryMocks.trackErrorHandlerCrash.mock.calls),
-    ).not.toContain("setup-error-token-canary");
   });
 
   it("keeps actionable setup validation details while removing submitted credentials", () => {

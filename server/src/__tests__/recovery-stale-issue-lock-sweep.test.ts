@@ -20,8 +20,6 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 
-const mockTelemetryClient = vi.hoisted(() => ({ track: vi.fn() }));
-vi.mock("../telemetry.ts", () => ({ getTelemetryClient: () => mockTelemetryClient }));
 
 import { heartbeatService } from "../services/heartbeat.ts";
 import { recoveryService } from "../services/recovery/service.ts";
@@ -47,7 +45,6 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
   }, 20_000);
 
   afterEach(async () => {
-    mockTelemetryClient.track.mockClear();
     await db.delete(nativeRunFinalizations);
     await db.delete(nativeRunResults);
     await db.delete(issueComments);
@@ -324,17 +321,6 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
       .then((rows) => rows[0]);
     expect(event?.message).toContain("process and sandbox gone");
 
-    // The recovery sweep's own terminal write must emit exactly one
-    // agent.task_run event for the run it just terminalized. The write
-    // never awaits the emission, so wait for it here instead of asserting
-    // it fired synchronously.
-    await vi.waitFor(() => {
-      expect(mockTelemetryClient.track).toHaveBeenCalledTimes(1);
-    });
-    expect(mockTelemetryClient.track).toHaveBeenCalledWith(
-      "agent.task_run",
-      expect.objectContaining({ agent_id: agentId, state: "interrupted" }),
-    );
   });
 
   it.each(["in_progress", "done"])("preserves a live legacy controller lease when the issue is %s", async (status) => {
@@ -382,7 +368,6 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
     expect(result).toEqual({ cleared: 0, issueIds: [], terminalizedRunIds: [] });
     expect(await db.select({ status: heartbeatRuns.status }).from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, runningRunId))).toEqual([{ status: "running" }]);
-    expect(mockTelemetryClient.track).not.toHaveBeenCalled();
   });
 
   it("preserves a process-less native run while same-run resumption owns its retry", async () => {
@@ -475,7 +460,6 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
         .where(eq(heartbeatRuns.id, runningRunId))).toEqual([{ status: "running", errorCode: null }]);
       expect(await db.select({ executionRunId: issues.executionRunId }).from(issues)
         .where(eq(issues.id, issueId))).toEqual([{ executionRunId: runningRunId }]);
-      expect(mockTelemetryClient.track).not.toHaveBeenCalled();
     },
   );
 
@@ -602,15 +586,6 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
       .then((rows) => rows[0]);
     expect(event?.message).toContain("issue reached a terminal status");
 
-    // The terminal write never awaits the telemetry emission, so wait for
-    // it here instead of asserting it fired synchronously.
-    await vi.waitFor(() => {
-      expect(mockTelemetryClient.track).toHaveBeenCalledTimes(1);
-    });
-    expect(mockTelemetryClient.track).toHaveBeenCalledWith(
-      "agent.task_run",
-      expect.objectContaining({ agent_id: agentId, state: "succeeded" }),
-    );
   });
 
   it("terminalizes a running run to cancelled when its issue is cancelled (reuse-lease path)", async () => {
@@ -644,15 +619,6 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
       .then((rows) => rows[0]?.status);
     expect(runStatus).toBe("cancelled");
 
-    // The terminal write never awaits the telemetry emission, so wait for
-    // it here instead of asserting it fired synchronously.
-    await vi.waitFor(() => {
-      expect(mockTelemetryClient.track).toHaveBeenCalledTimes(1);
-    });
-    expect(mockTelemetryClient.track).toHaveBeenCalledWith(
-      "agent.task_run",
-      expect.objectContaining({ agent_id: agentId, state: "cancelled" }),
-    );
   });
 
   it("does not terminalize a running run whose process is alive and whose issue is not terminal", async () => {
@@ -689,7 +655,6 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
     expect(runStatus).toBe("running");
 
     // No terminal write happened, so no telemetry event fires.
-    expect(mockTelemetryClient.track).not.toHaveBeenCalled();
   });
 
   it("does not terminalize or clear issue locks when an ownership hold arrives after the sweep snapshot", async () => {
@@ -780,7 +745,6 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
         executionRunId: runningRunId,
       },
     ]);
-    expect(mockTelemetryClient.track).not.toHaveBeenCalled();
   });
 
   it("does not terminalize a live run that a terminal issue and an active issue both reference", async () => {

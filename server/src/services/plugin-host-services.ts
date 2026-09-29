@@ -74,7 +74,6 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { logger } from "../middleware/logger.js";
-import { getTelemetryClient } from "../telemetry.js";
 import { accessService } from "./access.js";
 import { authorizationService, type AuthorizationActor } from "./authorization.js";
 import { redactEventPayload, sanitizeRecord } from "../redaction.js";
@@ -1645,6 +1644,13 @@ export function buildHostServices(
     },
 
     telemetry: {
+      // This fork ships no first-party telemetry pipeline, so a plugin's
+      // `ctx.telemetry.track()` has nowhere to forward to. The capability and
+      // its name validation are kept so a plugin that declares
+      // `telemetry.track` still installs and runs unchanged; the event is
+      // validated and dropped rather than sent anywhere. Plugins that need a
+      // durable record should use `ctx.logger` or `ctx.metrics`, which write to
+      // the instance database.
       async track(params) {
         const eventName = String(params.eventName ?? "").trim();
         if (!TELEMETRY_EVENT_NAME_REGEX.test(eventName)) {
@@ -1652,9 +1658,6 @@ export function buildHostServices(
             'Plugin telemetry event names must be lowercase slugs using letters, numbers, "_" or "-".',
           );
         }
-        const telemetryClient = getTelemetryClient();
-        if (!telemetryClient) return;
-        telemetryClient.trackDynamic(`plugin.${pluginKey}.${eventName}`, params.dimensions);
       },
     },
 

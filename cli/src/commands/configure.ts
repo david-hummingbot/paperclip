@@ -73,9 +73,6 @@ function defaultConfig(): PaperclipConfig {
       baseUrlMode: "auto",
       disableSignUp: false,
     },
-    telemetry: {
-      enabled: true,
-    },
     storage: defaultStorageConfig(),
     secrets: defaultSecretsConfig(),
   };
