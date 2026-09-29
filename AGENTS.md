@@ -20,6 +20,10 @@ Before making changes, read in this order:
 `doc/SPEC.md` is long-horizon product context.
 `doc/SPEC-implementation.md` is the concrete V1 build contract.
 
+When adding or changing a model provider endpoint, read
+`doc/provider-connections.md`. When changing coordination rooms, read
+`doc/coordination-rooms.md`.
+
 When adding or changing an Apps catalog connection, also follow
 `doc/connections/CONNECTOR-PLAYBOOK.md`. It is the canonical connection
 authoring runbook for provider research, supported transport/auth patterns,
