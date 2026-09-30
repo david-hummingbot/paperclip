@@ -14,6 +14,10 @@ import {
   SANDBOX_STARTUP_OUTCOME,
   SANDBOX_STARTUP_SPAN_ATTRS,
 } from "@paperclipai/adapter-utils/acpx-engine/startup-timing";
+import {
+  containerNameForAgent,
+  volumeNameForAgent,
+} from "@paperclipai/adapter-utils/docker";
 import { parseObject } from "../adapters/utils.js";
 import { getStartupTracer } from "../instrumentation.js";
 import { resolveEnvironmentDriverConfigForRuntime } from "./environment-config.js";
@@ -228,7 +232,14 @@ export async function resolveEnvironmentExecutionTarget(input: {
     id?: string;
     driver: string;
     config: Record<string, unknown> | null;
+    /** Owning agent, for a `docker` environment that is one agent's computer. */
+    agentId?: string | null;
   };
+  /**
+   * The agent this run belongs to. Used to derive a docker container name when
+   * the environment row does not already carry its owner.
+   */
+  agentId?: string | null;
   leaseId?: string | null;
   leaseMetadata: Record<string, unknown> | null;
   lease?: EnvironmentLease | null;
@@ -627,10 +638,49 @@ export async function resolveEnvironmentExecutionTarget(input: {
     };
   }
 
-  if (
-    !adapterSupportsRemoteManagedEnvironments(input.adapterType) ||
-    input.environment.driver !== "ssh"
-  ) {
+  if (!adapterSupportsRemoteManagedEnvironments(input.adapterType)) {
+    return null;
+  }
+
+  if (input.environment.driver === "docker") {
+    const dockerConfig = parseObject(input.environment.config);
+    const image = typeof dockerConfig.image === "string" ? dockerConfig.image.trim() : "";
+    if (!image) return null;
+    const workspacePath =
+      typeof dockerConfig.workspacePath === "string" && dockerConfig.workspacePath.trim()
+        ? dockerConfig.workspacePath.trim()
+        : "/workspace";
+    // The container and volume names are derived from the owning agent rather
+    // than typed by an operator, so they are stable across renames and cannot
+    // collide between agents.
+    const ownerAgentId =
+      typeof input.environment.agentId === "string" && input.environment.agentId
+        ? input.environment.agentId
+        : input.agentId;
+    if (!ownerAgentId) return null;
+    const asString = (value: unknown): string | null =>
+      typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+    return {
+      kind: "remote",
+      transport: "docker",
+      environmentId: input.environment.id ?? null,
+      leaseId: input.leaseId ?? null,
+      remoteCwd: workspacePath,
+      spec: {
+        containerName:
+          asString(dockerConfig.containerName) ?? containerNameForAgent(ownerAgentId),
+        image,
+        workspacePath,
+        user: asString(dockerConfig.user),
+        memoryLimit: asString(dockerConfig.memoryLimit),
+        cpuLimit: asString(dockerConfig.cpuLimit),
+        volumeName: asString(dockerConfig.volumeName) ?? volumeNameForAgent(ownerAgentId),
+        dockerContext: asString(dockerConfig.dockerContext),
+      },
+    };
+  }
+
+  if (input.environment.driver !== "ssh") {
     return null;
   }
 

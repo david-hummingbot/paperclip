@@ -8,6 +8,13 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { githubLauncherSource } from "./github-launcher.js";
 import type { SshRemoteExecutionSpec } from "./ssh.js";
 import {
+  buildExecArgs as buildDockerExecArgs,
+  createDockerCommandManagedRuntimeRunner,
+  ensureContainerRunning,
+  runDockerCli,
+  type DockerExecutionSpec,
+} from "./docker.js";
+import {
   prepareCommandManagedRuntime,
   type CommandManagedDuplexChannel,
   type CommandManagedRuntimeAsset,
@@ -144,6 +151,21 @@ export interface AdapterSshExecutionTarget extends AdapterExecutionTargetWorkspa
 }
 
 /**
+ * One long-lived container that belongs to a single agent. Commands run
+ * through `docker exec`, so the run is off-host in the sense every consumer
+ * cares about — a host-local directory path is not present on the target —
+ * while the container itself persists between heartbeats.
+ */
+export interface AdapterDockerExecutionTarget extends AdapterExecutionTargetWorkspaceMetadata {
+  kind: "remote";
+  transport: "docker";
+  environmentId?: string | null;
+  leaseId?: string | null;
+  remoteCwd: string;
+  spec: DockerExecutionSpec;
+}
+
+/**
  * Read-only snapshot of the effective execution capabilities for one
  * execution target — local, ssh, sandbox, or plugin. Each flag is the
  * resolved result of the provider's declaration, the live worker's verified
@@ -235,6 +257,7 @@ export interface AdapterSandboxExecutionTarget extends AdapterExecutionTargetWor
 export type AdapterExecutionTarget =
   | AdapterLocalExecutionTarget
   | AdapterSshExecutionTarget
+  | AdapterDockerExecutionTarget
   | AdapterSandboxExecutionTarget;
 
 export type AdapterRemoteExecutionSpec = SshRemoteExecutionSpec;
@@ -556,6 +579,9 @@ export function describeAdapterExecutionTarget(
   if (target.transport === "ssh") {
     return `SSH environment ${target.spec.username}@${target.spec.host}:${target.spec.port}`;
   }
+  if (target.transport === "docker") {
+    return `Docker container ${target.spec.containerName}`;
+  }
   return `sandbox environment${target.providerKey ? ` (${target.providerKey})` : ""}`;
 }
 
@@ -673,7 +699,10 @@ function preferredSandboxShell(target: AdapterSandboxExecutionTarget): "bash" | 
   return preferredShellForSandbox(target.shellCommand);
 }
 
-type AdapterCommandCapableExecutionTarget = AdapterSshExecutionTarget | AdapterSandboxExecutionTarget;
+type AdapterCommandCapableExecutionTarget =
+  | AdapterSshExecutionTarget
+  | AdapterDockerExecutionTarget
+  | AdapterSandboxExecutionTarget;
 
 // The Secure Shell command runner's own output buffer. This value used to
 // derive from the bridge body limit (`DEFAULT_SANDBOX_CALLBACK_BRIDGE_MAX_BODY_BYTES
@@ -690,11 +719,21 @@ function adapterExecutionTargetCommandRunner(target: AdapterCommandCapableExecut
       maxBufferBytes: SSH_COMMAND_MAX_BUFFER_BYTES,
     });
   }
+  if (target.transport === "docker") {
+    return createDockerCommandManagedRuntimeRunner({
+      spec: target.spec,
+      defaultCwd: target.remoteCwd,
+    });
+  }
   return requireSandboxRunner(target);
 }
 
 function adapterExecutionTargetShellCommand(target: AdapterCommandCapableExecutionTarget): "bash" | "sh" {
-  return target.transport === "ssh" ? "sh" : preferredSandboxShell(target);
+  if (target.transport === "ssh") return "sh";
+  // The container image is the operator's own and is not guaranteed to have
+  // bash, so use the shell every image has.
+  if (target.transport === "docker") return "sh";
+  return preferredSandboxShell(target);
 }
 
 function adapterExecutionTargetTimeoutMs(
@@ -862,6 +901,52 @@ export async function runAdapterExecutionTargetProcess(
   args: string[],
   options: AdapterExecutionTargetProcessOptions,
 ): Promise<RunProcessResult> {
+  if (target?.kind === "remote" && target.transport === "docker") {
+    const env = sanitizeRemoteExecutionEnv(options.env);
+    await options.onRuntimeProgress?.({
+      phase: "adapter_startup",
+      message: "Starting adapter in container",
+    });
+    // Idempotent: a healthy container short-circuits after one `inspect`, and
+    // a stopped or paused one is restarted rather than replaced so the work
+    // inside it survives.
+    await ensureContainerRunning(target.spec, { onLog: options.onLog });
+    const startedAt = new Date().toISOString();
+    const result = await runDockerCli(
+      buildDockerExecArgs({
+        spec: target.spec,
+        command,
+        args,
+        cwd: target.remoteCwd,
+        env: env as Record<string, string>,
+        interactive: options.stdin !== undefined,
+      }),
+      {
+        timeoutMs: options.timeoutSec > 0 ? options.timeoutSec * 1000 : 0,
+        ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
+        ...(options.onLog ? { onLog: options.onLog } : {}),
+        ...(options.onSpawn
+          ? {
+              onSpawn: async (meta) =>
+                options.onSpawn?.({ ...meta, processGroupId: null }),
+            }
+          : {}),
+      },
+    );
+    // `docker exec` returns the command's own exit code, so a clean exit is a
+    // real stop receipt for the process inside the container.
+    if (!result.timedOut) options.onProcessStopped?.();
+    return {
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut: result.timedOut,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      pid: null,
+      startedAt,
+    };
+  }
+
   if (target?.kind === "remote" && target.transport === "sandbox") {
     const runner = requireSandboxRunner(target);
     const env = sanitizeRemoteExecutionEnv(options.env);
@@ -947,6 +1032,33 @@ export async function runAdapterExecutionTargetShellCommand(
   if (target?.kind === "remote") {
     const startedAt = new Date().toISOString();
     const env = sanitizeRemoteExecutionEnv(options.env);
+    if (target.transport === "docker") {
+      await ensureContainerRunning(target.spec, { onLog });
+      // A shell command needs a shell: `docker exec` takes an argv, so the
+      // command string is handed to `sh -lc` inside the container the same way
+      // the sandbox branch below does it.
+      const result = await runDockerCli(
+        buildDockerExecArgs({
+          spec: target.spec,
+          command: "sh",
+          args: ["-lc", command],
+          cwd: target.remoteCwd,
+          env: env as Record<string, string>,
+        }),
+        { timeoutMs: (options.timeoutSec ?? 15) * 1000 },
+      );
+      if (result.stdout) await onLog("stdout", result.stdout);
+      if (result.stderr) await onLog("stderr", result.stderr);
+      return {
+        exitCode: result.exitCode,
+        signal: result.signal,
+        timedOut: result.timedOut,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        pid: null,
+        startedAt,
+      };
+    }
     if (target.transport === "ssh") {
       try {
         // Pass the raw command — `runSshCommand` owns profile sourcing and
@@ -1315,6 +1427,15 @@ export function adapterExecutionTargetSessionIdentity(
 ): Record<string, unknown> | null {
   if (!target || target.kind === "local") return null;
   if (target.transport === "ssh") return buildRemoteExecutionSessionIdentity(target.spec);
+  if (target.transport === "docker") {
+    return {
+      transport: "docker",
+      containerName: target.spec.containerName,
+      image: target.spec.image,
+      environmentId: target.environmentId ?? null,
+      remoteCwd: target.remoteCwd,
+    };
+  }
   return {
     transport: "sandbox",
     providerKey: target.providerKey ?? null,
@@ -1461,6 +1582,24 @@ export async function prepareAdapterExecutionTargetRuntime(input: {
     return {
       target,
       workspaceRemoteDir: null,
+      runtimeRootDir: null,
+      assetDirs: {},
+      additionalSourceDirs: {},
+      additionalSourceFailures: [],
+      workspaceSyncSnapshot: null,
+      restoreWorkspace: async () => {},
+    };
+  }
+
+  if (target.transport === "docker") {
+    await ensureContainerRunning(target.spec);
+    // No staging. The container's workspace lives on its own volume and
+    // survives between runs, so there is no host directory to sync in and
+    // nothing to restore out. A future pass can add copy-in for referenced
+    // projects; today those are simply not staged, the same as SSH.
+    return {
+      target,
+      workspaceRemoteDir: target.remoteCwd,
       runtimeRootDir: null,
       assetDirs: {},
       additionalSourceDirs: {},

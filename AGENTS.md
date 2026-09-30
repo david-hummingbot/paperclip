@@ -22,7 +22,8 @@ Before making changes, read in this order:
 
 When adding or changing a model provider endpoint, read
 `doc/provider-connections.md`. When changing coordination rooms, read
-`doc/coordination-rooms.md`.
+`doc/coordination-rooms.md`. When changing where an agent's runs execute, read
+`doc/agent-computers.md`.
 
 When adding or changing an Apps catalog connection, also follow
 `doc/connections/CONNECTOR-PLAYBOOK.md`. It is the canonical connection

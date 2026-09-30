@@ -74,6 +74,7 @@ export {
 export { goalService } from "./goals.js";
 export { providerConnectionService } from "./provider-connections.js";
 export { coordinationRoomService } from "./coordination-rooms.js";
+export { agentComputerService } from "./agent-computer.js";
 export { activityService, type ActivityFilters } from "./activity.js";
 export { workTimelineService, normalizeTimelineWindow } from "./work-timeline.js";
 export { attentionService } from "./attention.js";

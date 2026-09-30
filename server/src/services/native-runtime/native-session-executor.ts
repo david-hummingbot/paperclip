@@ -10553,7 +10553,13 @@ async function createRunnerdBackendWithinSessionClaim(
           spec: remoteTarget.spec,
           defaultCwd: remoteTarget.remoteCwd,
         })
-      : remoteTarget.runner
+      : // A docker target carries no provider runner. The native runtime needs
+        // one, so a docker container is not eligible for the native path and
+        // falls to the `runner_transport_ineligible` guard below rather than
+        // silently running somewhere else.
+        remoteTarget.transport === "docker"
+        ? null
+        : remoteTarget.runner
     : null;
   if (remoteTarget && !remoteCommandRunner) {
     throw new Error(

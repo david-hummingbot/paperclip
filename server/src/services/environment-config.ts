@@ -68,6 +68,50 @@ const sshEnvironmentConfigProbeSchema = sshEnvironmentConfigSchema.extend({
 
 const sshEnvironmentConfigPersistenceSchema = sshEnvironmentConfigProbeSchema;
 
+/**
+ * One long-lived container per agent.
+ *
+ * `containerName` and `volumeName` are derived from the agent id by the
+ * environment service rather than typed by an operator, so they stay stable
+ * across renames and cannot collide between agents.
+ */
+const dockerEnvironmentConfigSchema = z.object({
+  image: z
+    .string({ error: "Docker environments require an image." })
+    .trim()
+    .min(1, "Docker environments require an image."),
+  workspacePath: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((value) => value.startsWith("/"), "The container workspace path must be absolute.")
+    .default("/workspace"),
+  user: z.string().trim().min(1).optional().nullable().default(null),
+  // Docker's own notation, validated loosely: the daemon is the authority on
+  // what it accepts, and mirroring its grammar here would drift.
+  memoryLimit: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d+)?[bkmgBKMG]?$/, "Memory limit looks like 512m or 4g.")
+    .optional()
+    .nullable()
+    .default(null),
+  cpuLimit: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d+)?$/, "CPU limit is a decimal count, for example 2 or 1.5.")
+    .optional()
+    .nullable()
+    .default(null),
+  /** Docker CLI context, for a daemon that is not the default one. */
+  dockerContext: z.string().trim().min(1).optional().nullable().default(null),
+  /** Set by the environment service from the owning agent; not operator input. */
+  containerName: z.string().trim().min(1).optional().nullable().default(null),
+  volumeName: z.string().trim().min(1).optional().nullable().default(null),
+}).strict();
+
+export type DockerEnvironmentConfig = z.infer<typeof dockerEnvironmentConfigSchema>;
+
 const fakeSandboxEnvironmentConfigSchema = z.object({
   provider: z.literal("fake").default("fake"),
   image: z
@@ -451,6 +495,16 @@ export function normalizeEnvironmentConfig(input: {
     return parsed.data satisfies SshEnvironmentConfig;
   }
 
+  if (input.driver === "docker") {
+    const parsed = dockerEnvironmentConfigSchema.safeParse(parseObject(input.config));
+    if (!parsed.success) {
+      throw unprocessable(toErrorMessage(parsed.error), {
+        issues: parsed.error.issues,
+      });
+    }
+    return parsed.data satisfies DockerEnvironmentConfig;
+  }
+
   if (input.driver === "sandbox") {
     const parsed = parseSandboxEnvironmentConfig(input.config);
     if (!parsed.success) {
@@ -495,6 +549,16 @@ export function normalizeEnvironmentConfigForProbe(input: {
       });
     }
     return parsed.data satisfies SshEnvironmentConfig;
+  }
+
+  if (input.driver === "docker") {
+    const parsed = dockerEnvironmentConfigSchema.safeParse(parseObject(input.config));
+    if (!parsed.success) {
+      throw unprocessable(toErrorMessage(parsed.error), {
+        issues: parsed.error.issues,
+      });
+    }
+    return parsed.data satisfies DockerEnvironmentConfig;
   }
 
   if (input.driver === "sandbox") {
