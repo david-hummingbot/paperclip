@@ -315,6 +315,7 @@ import {
 } from "./native-runtime/native-chat-workspace.js";
 import { reportRunFailure } from "./run-failure-report.js";
 import {
+  applyHarnessProviderConnection,
   applyProviderConnectionToConfig,
   resolveAgentProviderConnection,
 } from "./provider-connection-runtime.js";
@@ -21430,14 +21431,37 @@ export function heartbeatService(
       // runtime config just before dispatch. Agents without one are untouched,
       // so no existing config changes shape. The key lives only on this
       // in-memory object; it is never persisted back onto the agent.
-      runtimeConfig = applyProviderConnectionToConfig(
-        runtimeConfig,
-        await resolveAgentProviderConnection(db, {
-          companyId: agent.companyId,
-          agentId: agent.id,
-          runId: run.id,
-        }),
-      );
+      //
+      // A managed AI connection is a second, competing source of credentials,
+      // and it already owns the run env. When one is bound the provider
+      // connection is skipped entirely rather than layered on top of it.
+      const runProviderConnection = aiBinding
+        ? null
+        : await resolveAgentProviderConnection(db, {
+            companyId: agent.companyId,
+            agentId: agent.id,
+            runId: run.id,
+          });
+      runtimeConfig = applyProviderConnectionToConfig(runtimeConfig, runProviderConnection);
+      // A CLI harness gets the same connection as env instead, so a local or
+      // gateway model drives a real coding harness with this agent's usual
+      // tools, skills, workspace and permissions.
+      const harnessInjection = applyHarnessProviderConnection(runtimeConfig, {
+        adapterType: agent.adapterType,
+        connection: runProviderConnection,
+      });
+      runtimeConfig = harnessInjection.config;
+      if (harnessInjection.skipped) {
+        // Not fatal: the agent runs on its normal credentials. Recording why
+        // keeps a mismatched adapter and connection from looking like the
+        // connection was simply ignored.
+        await appendRunEvent(run, {
+          eventType: "lifecycle",
+          stream: "system",
+          level: "warn",
+          message: `Provider connection not applied: ${harnessInjection.skipped}`,
+        });
+      }
       const latestAgentConfigRevision = await getLatestAgentConfigRevision(
         agent.companyId,
         agent.id,

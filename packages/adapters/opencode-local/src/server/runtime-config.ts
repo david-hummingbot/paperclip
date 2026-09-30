@@ -108,7 +108,21 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   targetIsRemote?: boolean;
 }): Promise<PreparedOpenCodeRuntimeConfig> {
   const skipPermissions = asBoolean(input.config.dangerouslySkipPermissions, true);
-  if (!skipPermissions) {
+  // The opt-out suppresses the permission override, not the provider wiring.
+  // A custom provider and a pinned small model are what let OpenCode resolve
+  // the configured model at all, so dropping them here would leave a
+  // `provider/model` ref pointing at a provider that was never registered —
+  // the run fails with "Model not found" rather than merely prompting for
+  // permissions. So we still write a runtime config when there is provider
+  // wiring to write; it just does not carry `permission: "allow"`.
+  const hasProviderWiring =
+    Boolean(
+      (input.env.PAPERCLIP_OPENCODE_PROVIDERS ?? process.env.PAPERCLIP_OPENCODE_PROVIDERS)?.trim(),
+    ) ||
+    Boolean(
+      (input.env.PAPERCLIP_OPENCODE_SMALL_MODEL ?? process.env.PAPERCLIP_OPENCODE_SMALL_MODEL)?.trim(),
+    );
+  if (!skipPermissions && !hasProviderWiring) {
     return {
       env: input.env,
       notes: [],
@@ -149,9 +163,9 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   }
 
   const existingConfig = await readJsonObject(runtimeConfigPath);
-  const notes = [
-    "Injected runtime OpenCode config with permission=allow for all tools and connections.",
-  ];
+  const notes = skipPermissions
+    ? ["Injected runtime OpenCode config with permission=allow for all tools and connections."]
+    : ["Injected runtime OpenCode config; permissions left as configured."];
 
   // Merge gateway/custom provider definitions supplied via PAPERCLIP_OPENCODE_PROVIDERS
   // (a JSON object in OpenCode's `provider` shape). OpenCode resolves a `--model
@@ -204,7 +218,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
 
   const nextConfig: Record<string, unknown> = {
     ...existingConfig,
-    permission: "allow",
+    ...(skipPermissions ? { permission: "allow" } : {}),
   };
   if (Object.keys(nextProvider).length > 0) {
     nextConfig.provider = nextProvider;

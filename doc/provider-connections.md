@@ -123,11 +123,78 @@ OpenAI-compatible endpoint, and both still work:
 `stripAiAuthBindings` also preserves `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`
 and `XAI_BASE_URL` in the agent environment.
 
-These remain the path for an agent with no provider connection. Folding them
-into one precedence order — so a connection wins when one is selected — is
-build-list item 3's remaining work, together with teaching
-`assertManagedAiProjectAuth` to tell a connection-supplied base URL apart from
-an operator override it should reject.
+These remain the path for an agent with no provider connection. When an agent
+*does* have one, Paperclip fills the same two variables from it — see
+"Driving a CLI harness with a connection" below — so there is one mechanism,
+not two. Paperclip-assigned values win over the agent's own config env for
+those keys, because the selected connection is the authority on where the model
+lives.
+
+Teaching `assertManagedAiProjectAuth` to tell a connection-supplied base URL
+apart from an operator override it should reject is build-list item 3's
+remaining work.
+
+## Driving a CLI harness with a connection
+
+An agent with a provider connection and an adapter type of `opencode_local`,
+`codex_local` or `claude_local` gets that connection injected into the harness
+at dispatch. This is what makes a local or gateway model an *ordinary* agent:
+the harness, its tools, skills, workspace and permissions are unchanged, and
+only the endpoint serving the tokens differs.
+
+| Adapter | Needs wire | Injected |
+| --- | --- | --- |
+| `opencode_local` | `openai_chat`, `openai_responses` | `PAPERCLIP_OPENCODE_PROVIDERS`, `PAPERCLIP_OPENCODE_SMALL_MODEL`, and a rewritten `model` |
+| `codex_local` | `openai_chat`, `openai_responses` | `PAPERCLIP_CODEX_PROVIDERS` |
+| `claude_local` | `anthropic` | `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` |
+
+The provider is always registered under the fixed id `paperclip`. A connection
+name is operator-editable and may contain characters neither harness accepts in
+a provider key, and nothing else in the generated config refers to it.
+
+Three details are not obvious and each one is a run that would otherwise fail:
+
+- **OpenCode needs an explicit `models` map.** `OPENCODE_ALLOW_ALL_MODELS` does
+  not bypass its internal `getModel()`, so an id the endpoint serves is still
+  rejected with "Model not found" unless it is listed. The agent's `model` is
+  also rewritten to `paperclip/<model>`, since OpenCode resolves a model ref
+  only within a named provider. It splits on the *first* slash, so a
+  vendor-qualified id such as `qwen/qwen3-coder` survives intact.
+- **OpenCode's auxiliary small model is pinned.** Its default is a built-in
+  provider model a repointed endpoint will not serve, and that failure — from a
+  session-title call, not the agent's work — aborts the whole run.
+- **Codex's `--model` picks a model within the selected provider**, so the
+  provider is chosen with `model_provider` and the agent's `model` is left
+  alone.
+
+`openai_compatible` is absent from that table on purpose: it reads the
+connection off the runtime config itself, so there is nothing to inject and
+nothing to report.
+
+When the adapter and the connection's wire disagree — a `claude_local` agent
+pointed at an OpenAI endpoint — nothing is injected. The agent runs on its
+normal credentials and the reason is written to the run log as a `lifecycle`
+warning, rather than the request being mis-sent or the run failing to start. An
+agent on a managed AI binding is skipped the same way: a managed subscription
+is not layered with a connection.
+
+### Where the key goes
+
+The generated JSON never carries the key; it names the env var
+`PAPERCLIP_PROVIDER_API_KEY`, which is set separately. What each harness does
+after that differs:
+
+- **Codex** keeps the name. `config.toml` stores `env_key` and Codex reads the
+  variable at call time, so the key is never written to disk.
+- **OpenCode** resolves the `{env:...}` placeholder server-side and writes the
+  value into its managed `opencode.json`. This is deliberate and predates this
+  feature: the run process may be sandboxed and is not guaranteed to carry the
+  variable to OpenCode's spawned server. That file is in a per-run `mkdtemp`
+  directory (mode 0700) that `cleanup()` removes when the run ends — the same
+  treatment OpenCode's other managed credentials already get.
+
+A keyless local endpoint gets no key variable and no `apiKey` field at all,
+rather than an empty string, which some servers reject.
 
 ## The `openai_compatible` adapter
 
@@ -169,7 +236,8 @@ a cost choice, not a reduced role — it is expected to edit files and run
 commands like any other agent. That comes from pointing a CLI harness
 (`opencode_local`, `codex_local`) at the connection, which keeps the agent's
 tools, skills, workspace and permissions exactly as they are and changes only
-which endpoint serves the tokens. See build-list item 4b in `design_build.md`.
+which endpoint serves the tokens. See "Driving a CLI harness with a connection"
+above.
 
 A model that keeps calling tools without concluding stops at `maxToolRounds`
 with a `tool_round_limit` error, rather than looping until the budget is gone.

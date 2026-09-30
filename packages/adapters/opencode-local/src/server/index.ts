@@ -71,3 +71,8 @@ export {
   resetOpenCodeModelsCacheForTests,
 } from "./models.js";
 export { parseOpenCodeJsonl, isOpenCodeUnknownSessionError } from "./parse.js";
+
+// Exported so the server can prove the provider-connection env it generates is
+// the shape this harness actually parses, rather than only the shape the
+// server believes it emits.
+export { prepareOpenCodeRuntimeConfig } from "./runtime-config.js";
