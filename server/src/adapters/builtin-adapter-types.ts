@@ -3,6 +3,7 @@
  */
 export const BUILTIN_ADAPTER_TYPES = new Set([
   "acpx_local",
+  "openai_compatible",
   "claude_local",
   "codex_local",
   "paperclip_runner",

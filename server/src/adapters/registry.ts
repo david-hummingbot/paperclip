@@ -53,6 +53,15 @@ import {
   models as cursorModels,
 } from "@paperclipai/adapter-cursor-local";
 import {
+  execute as openAiCompatibleExecute,
+  testEnvironment as openAiCompatibleTestEnvironment,
+  sessionCodec as openAiCompatibleSessionCodec,
+} from "@paperclipai/adapter-openai-compatible/server";
+import {
+  agentConfigurationDoc as openAiCompatibleAgentConfigurationDoc,
+  models as openAiCompatibleModels,
+} from "@paperclipai/adapter-openai-compatible";
+import {
   execute as cursorCloudExecute,
   getConfigSchema as getCursorCloudConfigSchema,
   sessionCodec as cursorCloudSessionCodec,
@@ -844,6 +853,31 @@ const piLocalAdapter: ServerAdapterModule = {
   agentConfigurationDoc: piAgentConfigurationDoc,
 };
 
+/**
+ * Talks to any OpenAI-compatible endpoint through a provider connection.
+ *
+ * Unlike the CLI-backed adapters this one spawns no process: it calls the
+ * connection's `/chat/completions` or `/responses` directly. That is why it
+ * declares `invocation_context` tool delivery — there is no child environment
+ * to put variables in, so Paperclip's control tools are described to the model
+ * as function tools and executed by the adapter.
+ *
+ * It has no skills sync and no runtime command spec, because it has no harness
+ * to install or configure.
+ */
+const openAiCompatibleAdapter: ServerAdapterModule = {
+  type: "openai_compatible",
+  runtimeToolDelivery: "invocation_context",
+  execute: openAiCompatibleExecute,
+  testEnvironment: openAiCompatibleTestEnvironment,
+  sessionCodec: openAiCompatibleSessionCodec,
+  sessionManagement: getAdapterSessionManagement("openai_compatible") ?? undefined,
+  // The reachable models come from the selected provider connection, so there
+  // is no static catalog to advertise here.
+  models: openAiCompatibleModels,
+  agentConfigurationDoc: openAiCompatibleAgentConfigurationDoc,
+};
+
 const adaptersByType = new Map<string, ServerAdapterModule>();
 
 // For builtin types that are overridden by an external adapter, we keep the
@@ -871,6 +905,7 @@ function registerBuiltInAdapters() {
     hermesGatewayAdapter,
     hermesLocalAdapter,
     openclawGatewayAdapter,
+    openAiCompatibleAdapter,
     processAdapter,
     httpAdapter,
   ]) {

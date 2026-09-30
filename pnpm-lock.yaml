@@ -338,6 +338,19 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
 
+  packages/adapters/openai-compatible:
+    dependencies:
+      '@paperclipai/adapter-utils':
+        specifier: workspace:*
+        version: link:../../adapter-utils
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/adapters/openclaw-gateway:
     dependencies:
       '@paperclipai/adapter-utils':
@@ -922,6 +935,9 @@ importers:
       '@paperclipai/adapter-kimi-local':
         specifier: workspace:*
         version: link:../packages/adapters/kimi-local
+      '@paperclipai/adapter-openai-compatible':
+        specifier: workspace:*
+        version: link:../packages/adapters/openai-compatible
       '@paperclipai/adapter-openclaw-gateway':
         specifier: workspace:*
         version: link:../packages/adapters/openclaw-gateway

@@ -314,6 +314,10 @@ import {
   nativeChatWorkspaceMatches,
 } from "./native-runtime/native-chat-workspace.js";
 import { reportRunFailure } from "./run-failure-report.js";
+import {
+  applyProviderConnectionToConfig,
+  resolveAgentProviderConnection,
+} from "./provider-connection-runtime.js";
 import { companySkillService } from "./company-skills.js";
 import { budgetService, type BudgetEnforcementScope } from "./budgets.js";
 import { secretService, type MissingRuntimeBinding } from "./secrets.js";
@@ -21421,6 +21425,19 @@ export function heartbeatService(
       // Always replace this runtime-only field; caller wake data cannot supply skills.
       context.paperclipWake = { ...parseObject(context.paperclipWake), connectorSkillInstructions: connectorDelivery.instructions };
       let runtimeConfig: Record<string, unknown> = connectorDelivery.config;
+      // An agent bound to a provider connection gets the resolved endpoint —
+      // base URL, wire format, headers and the secret-store key value — on its
+      // runtime config just before dispatch. Agents without one are untouched,
+      // so no existing config changes shape. The key lives only on this
+      // in-memory object; it is never persisted back onto the agent.
+      runtimeConfig = applyProviderConnectionToConfig(
+        runtimeConfig,
+        await resolveAgentProviderConnection(db, {
+          companyId: agent.companyId,
+          agentId: agent.id,
+          runId: run.id,
+        }),
+      );
       const latestAgentConfigRevision = await getLatestAgentConfigRevision(
         agent.companyId,
         agent.id,

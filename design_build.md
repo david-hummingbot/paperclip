@@ -145,7 +145,30 @@ The connection's `baseUrl` becomes the **single** source of a custom endpoint. T
 The agent picks a harness separately:
 
 - **ACP harness.** Keep the current Claude, Codex, Gemini, Kimi, and Grok adapters. When the harness can speak OpenAI-compatible HTTP, inject the connection base URL and key. A later step may register an arbitrary ACP command (`command` plus `args`) without a new adapter package per vendor.
-- **Generic OpenAI-compatible harness.** One new adapter. It calls `{baseUrl}/chat/completions` or the Responses API with the Paperclip wake payload and the tool gateway. Venice and OpenRouter are two connections, not two adapters.
+- **Generic OpenAI-compatible harness.** One new adapter. It calls `{baseUrl}/chat/completions` or the Responses API with the Paperclip wake payload and the tool gateway. Venice and OpenRouter are two connections, not two adapters. This harness has no file or shell access, so it is the right fit for an endpoint that serves nothing but completions — not the route to running a local model as an ordinary agent.
+
+### A local model is an ordinary agent
+
+The point of a local model is cost, not a reduced role: a smaller model running
+on the box handles the simpler tasks more cheaply than a cloud model, and it is
+expected to do **the same kind of work as every other agent** — edit files, run
+commands, open pull requests.
+
+That rules out the generic harness as the answer. A raw completions call has no
+file or shell tools, so an agent on it could only talk. Parity comes from
+pointing an existing CLI harness at the connection instead:
+
+- `opencode_local` and `codex_local` already accept an arbitrary
+  OpenAI-compatible endpoint, today through the undocumented
+  `PAPERCLIP_OPENCODE_PROVIDERS` and `PAPERCLIP_CODEX_PROVIDERS` env JSON.
+- Injecting the selected connection's `baseUrl`, key and model into that env
+  turns "which model does this agent use" into a connection choice, with the
+  agent's tools, skills, workspace and permissions unchanged.
+
+So the local-model story is **connection injection into the CLI adapters**,
+which is the unfinished half of build-list item 3. The `openai_compatible`
+adapter stays for endpoints that genuinely serve only completions; it is not
+how a local model becomes a working agent.
 
 Do not route this through `paperclip_runner`. The host still builds secrets, cwd, and session.
 
@@ -316,7 +339,8 @@ In dependency order. New code, and only this:
 1. **Environment ownership migration.** `companyId` and `agentId` on `environments`; re-scope `environments_name_idx` so names are unique per owner. Leave `environments_local_driver_idx` alone. Blocks everything in Feature 2.
 2. **Provider record migration.** Replace `ai_connection_defaults_provider_check` with a form that admits new providers; add `wire`, `baseUrl`, `apiKeySecretRef`, and extra headers to the connection record.
 3. Company-scoped provider connection records, plus presets for OpenAI, OpenRouter, Venice, Anthropic, xAI, and `local_openai`. `baseUrl` validation admits loopback and private addresses. Fold the `*_BASE_URL` env passthrough, `PAPERCLIP_OPENCODE_PROVIDERS`, and `PAPERCLIP_CODEX_PROVIDERS` into one precedence order and teach `assertManagedAiProjectAuth` to allow a connection-supplied base URL.
-4. One generic OpenAI-compatible adapter. Existing ACP adapters gain injection of a connection's base URL and key when they can use it.
+4. ~~One generic OpenAI-compatible adapter.~~ **Done** — `openai_compatible`, in `packages/adapters/openai-compatible`. Speaks both OpenAI wire formats, exposes Paperclip's control tools and no file/shell access, stores the transcript as the session, and classifies provider errors into Paperclip's retry families.
+4b. **Connection injection into the CLI adapters.** Feed a selected connection's `baseUrl`, key and model into `PAPERCLIP_OPENCODE_PROVIDERS` / `PAPERCLIP_CODEX_PROVIDERS` so a local or gateway model drives a real coding harness with the agent's usual tools and workspace. This, not item 4, is what makes a local model an ordinary agent.
 5. A Docker environment driver: one long-lived container per agent, `docker exec` for the run, added as a fourth `AdapterExecutionTarget` member.
 6. An agent compute placement: `shared`, `docker`, or `ssh`. SSH key generate-or-paste stays on the secret store.
 7. A primary GitHub repo on the agent.

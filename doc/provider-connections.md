@@ -129,8 +129,76 @@ build-list item 3's remaining work, together with teaching
 `assertManagedAiProjectAuth` to tell a connection-supplied base URL apart from
 an operator override it should reject.
 
+## The `openai_compatible` adapter
+
+An agent set to adapter type `openai_compatible` runs against its selected
+connection. This is the harness that makes a connection do something; the other
+adapters spawn a CLI that brings its own credentials.
+
+It speaks both OpenAI wire formats — `openai_chat` posts to
+`{baseUrl}/chat/completions`, `openai_responses` to `{baseUrl}/responses` — and
+picks by the connection's `wire` field. An `anthropic` or `acp` connection is
+refused with `provider_wire_unsupported` rather than silently mis-sent.
+
+Agent config keys:
+
+| Key | Meaning |
+| --- | --- |
+| `model` | Required. The model id as the endpoint names it. No fixed catalog. |
+| `systemPrompt` | Optional. Replaces the default system prompt. |
+| `maxToolRounds` | Optional, default 8. Assistant→tool→assistant cycles per run. |
+| `requestTimeoutMs` | Optional, default 300000. |
+
+The endpoint, wire, key and headers come from the connection, never from agent
+config, so no agent config holds a credential. The server resolves
+`apiKeySecretRef` and injects the value just before dispatch; it lives on the
+in-memory run config only and is never written back to the agent.
+
+### Tools, and what this adapter cannot do
+
+The model is offered Paperclip's run-scoped control tools —
+`connections_search` and `connection_request` — and nothing else.
+
+**There is no file system or shell access.** A raw completions call has none of
+the containment a CLI harness provides, so the adapter does not invent it. This
+adapter suits roles whose output is text and judgement: review, triage,
+research, planning.
+
+It is **not** how you run a local model as an ordinary agent. A local model is
+a cost choice, not a reduced role — it is expected to edit files and run
+commands like any other agent. That comes from pointing a CLI harness
+(`opencode_local`, `codex_local`) at the connection, which keeps the agent's
+tools, skills, workspace and permissions exactly as they are and changes only
+which endpoint serves the tokens. See build-list item 4b in `design_build.md`.
+
+A model that keeps calling tools without concluding stops at `maxToolRounds`
+with a `tool_round_limit` error, rather than looping until the budget is gone.
+
+### Sessions
+
+The conversation transcript *is* the session — a completions endpoint is
+stateless, so there is nothing else to resume. Paperclip stores it in
+`sessionParams` keyed by task, which is what keeps an agent's room thread
+separate from its review thread with no adapter-side awareness of either.
+
+A transport or provider failure mid-conversation still returns the transcript,
+so turns that already succeeded are not discarded by a later error.
+
+### Error families
+
+| Situation | Family | Effect |
+| --- | --- | --- |
+| 429, or an insufficient-quota body | `provider_quota` | Pause and retry, honouring `Retry-After` |
+| 5xx, 408, 409, timeout, connection refused | `transient_upstream` | Retry |
+| `content_filter` / refusal finish reason | `model_refusal` | Terminal; no retry into the same refusal |
+| 401/403, 404, other 4xx | none | Terminal |
+
+A connection-refused error names the local-server case explicitly, and a 404
+says to check the base URL's version segment — those two account for most
+first-run failures.
+
 ## Not yet implemented
 
-The generic OpenAI-compatible adapter that consumes a connection at run time
-(build-list item 4) is not built. Until it lands, a connection is a stored,
-validated record that the board and API can manage but no harness reads.
+- Model discovery from `GET {baseUrl}/models` is used by the connection probe
+  but not yet surfaced as a picker in the board.
+- No UI: connections are managed through the API only.
