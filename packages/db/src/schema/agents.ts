@@ -12,6 +12,7 @@ import {
   foreignKey,
   index,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { environments } from "./environments.js";
@@ -70,7 +71,13 @@ export const agents = pgTable(
     companyStatusIdx: index("agents_company_status_idx").on(table.companyId, table.status),
     companyReportsToIdx: index("agents_company_reports_to_idx").on(table.companyId, table.reportsTo),
     companyDefaultEnvironmentIdx: index("agents_company_default_environment_idx").on(table.companyId, table.defaultEnvironmentId),
-    companyPrimaryRepoIdx: index("agents_company_primary_repo_idx").on(table.companyId, table.primaryRepoFullName),
+    // Unique per company, not just indexed: "which agent owns this repo" has to
+    // have one answer. Two agents claiming the same repo would make room member
+    // seeding pick both and leave review ownership undefined. Partial, so the
+    // many agents with no primary repo do not collide with each other.
+    companyPrimaryRepoUq: uniqueIndex("agents_company_primary_repo_uniq")
+      .on(table.companyId, table.primaryRepoFullName)
+      .where(sql`${table.primaryRepoFullName} is not null`),
     computePlacementCheck: check(
       "agents_compute_placement_check",
       sql`${table.computePlacement} in ('shared','docker','ssh')`,

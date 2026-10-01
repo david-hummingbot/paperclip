@@ -32,6 +32,7 @@ import {
   normalizePaperclipRunnerAdapterConfig,
 } from "@paperclipai/adapter-utils/server-utils";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { isUniqueViolation } from "../db-errors.js";
 import {
   collectSecretRefs,
   collectUserSecretRefs,
@@ -336,6 +337,31 @@ export function deduplicateAgentName(
     }
   }
   return `${candidateName} ${Date.now()}`;
+}
+
+const PRIMARY_REPO_UNIQUE_CONSTRAINT = "agents_company_primary_repo_uniq";
+
+/**
+ * Turns the primary-repo unique violation into a 409 that names the repo.
+ *
+ * The index is the authority rather than a read-then-write check, which would
+ * race two concurrent claims on the same repo. "Which agent owns this repo"
+ * must have exactly one answer: room member seeding reads it, and two claimants
+ * would silently seed both.
+ */
+async function withPrimaryRepoConflict<T>(
+  repo: string | null | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isUniqueViolation(err, PRIMARY_REPO_UNIQUE_CONSTRAINT)) throw err;
+    throw conflict(`Another agent already owns ${repo}.`, {
+      code: "agent_primary_repo_taken",
+      primaryRepoFullName: repo ?? null,
+    });
+  }
 }
 
 export function agentService(db: Db) {
@@ -855,11 +881,36 @@ export function agentService(db: Db) {
     const transaction = (db as unknown as {
       transaction?: (callback: (tx: unknown) => Promise<AgentUpdateResult>) => Promise<AgentUpdateResult>;
     }).transaction;
-    if (typeof transaction !== "function") return applyUpdate(db);
-    return transaction.call(db, async (tx) => applyUpdate(tx as unknown as Db));
+    return withPrimaryRepoConflict(normalizedPatch.primaryRepoFullName, () =>
+      typeof transaction !== "function"
+        ? applyUpdate(db)
+        : transaction.call(db, async (tx) => applyUpdate(tx as unknown as Db)),
+    );
+  }
+
+  /**
+   * Agents whose primary repo is one of `repoFullNames`.
+   *
+   * The repo→agent binding lives on the agent, so a caller that needs "who
+   * owns these repos" — room member seeding, the board's repo column — reads
+   * it from here rather than restating the query. The unique index means each
+   * repo contributes at most one agent.
+   */
+  async function findByPrimaryRepos(companyId: string, repoFullNames: readonly string[]) {
+    if (repoFullNames.length === 0) return [];
+    return db
+      .select({ id: agents.id, name: agents.name, primaryRepoFullName: agents.primaryRepoFullName })
+      .from(agents)
+      .where(
+        and(
+          eq(agents.companyId, companyId),
+          inArray(agents.primaryRepoFullName, [...repoFullNames]),
+        ),
+      );
   }
 
   return {
+    findByPrimaryRepos,
     list: async (companyId: string, options?: { includeTerminated?: boolean }) => {
       const conditions = [eq(agents.companyId, companyId)];
       if (!options?.includeTerminated) {
@@ -902,7 +953,7 @@ export function agentService(db: Db) {
         nextConfig: adapterConfig,
         priorConfig: null,
       });
-      return db.transaction(async (tx) => {
+      return withPrimaryRepoConflict(data.primaryRepoFullName, () => db.transaction(async (tx) => {
         const txDb = tx as unknown as Db;
         // Consume the stored-session claim and create the fixed definition inside
         // the same transaction that inserts the binding. A rejected claim rolls
@@ -943,7 +994,7 @@ export function agentService(db: Db) {
           throw notFound("Agent not found");
         }
         return normalizedCreated;
-      });
+      }));
     },
 
     update: updateAgent,

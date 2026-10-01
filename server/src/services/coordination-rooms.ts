@@ -16,6 +16,7 @@ import type {
   UpdateCoordinationRoom,
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { agentService } from "./agents.js";
 import { issueService } from "./issues.js";
 import { logger } from "../middleware/logger.js";
 
@@ -137,6 +138,7 @@ export function coordinationRoomService(
   deps: { wakeup?: CoordinationRoomWakeup } = {},
 ) {
   const issuesSvc = issueService(db);
+  const agentsSvc = agentService(db);
 
   /**
    * `executor` lets a caller inside a transaction read its own uncommitted
@@ -205,16 +207,7 @@ export function coordinationRoomService(
     companyId: string,
     repoFullNames: readonly string[],
   ): Promise<string[]> {
-    if (repoFullNames.length === 0) return [];
-    const rows = await db
-      .select({ id: agents.id })
-      .from(agents)
-      .where(
-        and(
-          eq(agents.companyId, companyId),
-          inArray(agents.primaryRepoFullName, [...repoFullNames]),
-        ),
-      );
+    const rows = await agentsSvc.findByPrimaryRepos(companyId, repoFullNames);
     return rows.map((row) => row.id);
   }
 

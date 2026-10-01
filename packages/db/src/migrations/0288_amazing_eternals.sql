@@ -1,0 +1,2 @@
+DROP INDEX "agents_company_primary_repo_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "agents_company_primary_repo_uniq" ON "agents" USING btree ("company_id","primary_repo_full_name") WHERE "agents"."primary_repo_full_name" is not null;
