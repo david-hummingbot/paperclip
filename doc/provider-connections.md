@@ -123,16 +123,42 @@ OpenAI-compatible endpoint, and both still work:
 `stripAiAuthBindings` also preserves `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`
 and `XAI_BASE_URL` in the agent environment.
 
-These remain the path for an agent with no provider connection. When an agent
-*does* have one, Paperclip fills the same two variables from it — see
-"Driving a CLI harness with a connection" below — so there is one mechanism,
-not two. Paperclip-assigned values win over the agent's own config env for
-those keys, because the selected connection is the authority on where the model
-lives.
+### One precedence order
 
-Teaching `assertManagedAiProjectAuth` to tell a connection-supplied base URL
-apart from an operator override it should reject is build-list item 3's
-remaining work.
+Three mechanisms can point a harness at an endpoint. They are ranked, and the
+ranking is enforced rather than conventional:
+
+1. **A managed AI connection owns the run env.** An agent's config env carrying
+   any routing variable is refused with `ai_connection_incompatible` at dispatch
+   — a 422 that names the conflict — and every routing variable is then blanked
+   in the child environment. A managed subscription is never layered with
+   another endpoint.
+2. **A provider connection beats the agent's own hatches.** Paperclip fills the
+   same variables from the selected connection and its values win, because the
+   connection is the authority on where the model lives. A managed binding
+   causes provider-connection resolution to be skipped entirely, so (1) and (2)
+   never both apply.
+3. **The agent's own env hatches apply when neither of the above does.** This is
+   the unchanged path for an agent with no connection of either kind.
+
+The routing variables are `PAPERCLIP_OPENCODE_PROVIDERS`,
+`PAPERCLIP_CODEX_PROVIDERS`, `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` and
+`XAI_BASE_URL`. A hired agent carrying any of them keeps its own routing instead
+of inheriting its manager's connection, since naming an endpoint is itself an
+auth override.
+
+`PAPERCLIP_CODEX_PROVIDERS` was previously absent from every one of those lists
+while its OpenCode twin was present in all of them. That was a hole, not a
+style difference: the variable is read by `prepareCodexRuntimeConfig` and
+written into `config.toml` as `model_provider`, `base_url` and `env_key` — the
+exact keys `assertManagedAiProjectAuth` scans *project files* for — so the env
+hatch bypassed the check the file scan enforces, and a managed connection could
+be silently repointed. Tests assert against the real key lists so the lists
+cannot drift apart again.
+
+`assertManagedAiProjectAuth` needs no change for connection-supplied base URLs:
+it only runs under a managed binding, and a managed binding skips provider
+connections outright, so the two can never be present together.
 
 ## Driving a CLI harness with a connection
 

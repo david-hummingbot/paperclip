@@ -39,6 +39,14 @@ export const AI_AUTH_ENV_KEYS = [
   "OPENCODE_CONFIG",
   "OPENCODE_CONFIG_DIR",
   "PAPERCLIP_OPENCODE_PROVIDERS",
+  // Codex's twin of the OpenCode provider blob. It was missing here while its
+  // OpenCode counterpart was present, which meant a managed AI connection could
+  // be silently repointed: the variable is read by `prepareCodexRuntimeConfig`
+  // and written into `config.toml` as `model_provider` / `base_url` / `env_key`
+  // — the very keys `assertManagedAiProjectAuth` scans project files for — but
+  // it was neither refused nor blanked, so the env hatch bypassed the check the
+  // file scan enforces.
+  "PAPERCLIP_CODEX_PROVIDERS",
   "ANTHROPIC_BASE_URL",
   "OPENAI_BASE_URL",
   "XAI_BASE_URL",
@@ -60,6 +68,7 @@ export function stripAiAuthBindings(env: unknown): Record<string, unknown> {
         "CLAUDE_CODE_USE_VERTEX",
         "CLAUDE_CODE_USE_FOUNDRY",
         "PAPERCLIP_OPENCODE_PROVIDERS",
+        "PAPERCLIP_CODEX_PROVIDERS",
       ].includes(key)
     )
       delete result[key];
@@ -218,6 +227,7 @@ export async function prepareManagedAiRuntime(
     "CLAUDE_CODE_USE_VERTEX",
     "CLAUDE_CODE_USE_FOUNDRY",
     "PAPERCLIP_OPENCODE_PROVIDERS",
+    "PAPERCLIP_CODEX_PROVIDERS",
   ]) {
     if (configuredEnv[key])
       throw unprocessable(
