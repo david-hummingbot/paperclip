@@ -11,6 +11,7 @@ export {
   type PostCoordinationRoomMessage,
   type CoordinationRoom,
   type CoordinationRoomMember,
+  type CoordinationRoomMessageResult,
 } from "./coordination-room.js";
 
 export {

@@ -32,6 +32,14 @@ export const createCoordinationRoomSchema = z
      * `primaryRepoFullName`. Explicit `agentIds` are added on top.
      */
     seedMembersFromRepos: z.boolean().default(true),
+    /**
+     * Whether to open the transcript issue with the room.
+     *
+     * A room with no transcript cannot be posted to, so this defaults on. Pass
+     * `false` only when an existing unassigned issue is the thread; attach it
+     * afterwards with the transcript endpoint.
+     */
+    createTranscriptIssue: z.boolean().default(true),
   })
   .strict();
 export type CreateCoordinationRoom = z.infer<typeof createCoordinationRoomSchema>;
@@ -69,6 +77,12 @@ export type AddCoordinationRoomMember = z.infer<typeof addCoordinationRoomMember
 export const postCoordinationRoomMessageSchema = z
   .object({
     body: z.string().trim().min(1).max(100_000),
+    /**
+     * Mentions the caller resolved itself, unioned with the ones parsed out of
+     * `body`. The board's composer writes mention links into the body, so it
+     * needs neither field; this exists for API callers that have agent ids and
+     * no rendered mention markup.
+     */
     mentionAgentIds: z.array(z.string().uuid()).max(50).default([]),
   })
   .strict();
@@ -97,4 +111,15 @@ export interface CoordinationRoom {
   createdAt: string;
   updatedAt: string;
   closedAt: string | null;
+}
+
+/** What posting a message to a room did: the comment, and who it woke. */
+export interface CoordinationRoomMessageResult {
+  commentId: string;
+  roomId: string;
+  transcriptIssueId: string;
+  /** Members queued, in the order they were enqueued. */
+  wokeAgentIds: string[];
+  /** True when no mention narrowed the fan-out, so every member was queued. */
+  broadcast: boolean;
 }

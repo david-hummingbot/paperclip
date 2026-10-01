@@ -347,7 +347,10 @@ In dependency order. New code, and only this:
 5. ~~A Docker environment driver.~~ **Done** — `docker` is a fourth `AdapterExecutionTarget` member with lifecycle in `packages/adapter-utils/src/docker.ts`, config and probe in `environment-config.ts`, target resolution in `environment-execution-target.ts`, and placement/lifecycle in `agent-computer.ts`. See `doc/agent-computers.md`. Remaining: workspace staging into the container, and the native runner path (which needs a provider command runner a container has none of).
 6. ~~An agent compute placement: `shared`, `docker`, or `ssh`.~~ **Done** — `agents.computePlacement` plus the `agent-computer` service and routes. Remaining: SSH key generate-or-paste on the secret store.
 7. A primary GitHub repo on the agent.
-8. Coordination rooms: membership join table, unassigned transcript issue, serialized wake rules.
+8. ~~Coordination rooms: membership join table, unassigned transcript issue, serialized wake rules.~~ **Done** — `coordination_rooms` + `coordination_room_members`, the room service and routes, and `POST .../rooms/:roomId/messages`, which posts into the transcript and enqueues the member wakes. See `doc/coordination-rooms.md`. Notes:
+    - Creating a room opens its transcript through the issue service, so it gets a real identifier, activity and sequence. It stays unassigned.
+    - Mentions are parsed from the message body like any issue comment's, unioned with ids the caller supplies. Members are enqueued one at a time in membership order; a refused wake is logged and skipped rather than failing the message.
+    - The wake carries `wakeReason: "issue_comment_mentioned"`. The transcript is unassigned, so `decideIssueOwnership`, the deferred-wake drain and `shouldAutoCheckoutIssueForWake` each key off exactly that reason to let a non-owner run without taking the checkout. A room-specific reason would be enqueued and then silently cancelled at dispatch.
 9. A room workspace with one worktree and branch per member, checked out on that agent's existing computer.
 
 Unchanged: heartbeat claim, coalesce, checkout versus execution lock, budget hard-stop, session resume shape, the board as the only dashboard, and `paperclip_runner` as an experimental side path.

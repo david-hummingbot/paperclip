@@ -771,7 +771,9 @@ export async function createApp(
   api.use(emailRoutes(db, emailChannels));
   api.use(goalRoutes(db));
   api.use(providerConnectionRoutes(db));
-  api.use(coordinationRoomRoutes(db));
+  // The room's fan-out is the heartbeat's own wake entry point; a room adds
+  // members to a wake, not a second scheduler.
+  api.use(coordinationRoomRoutes(db, { wakeup: connectionIntentHeartbeat.wakeup }));
   api.use(agentComputerRoutes(db));
   api.use(onboardingSeedRoutes(db));
   api.use(boardChatRoutes(db, { deploymentMode: opts.deploymentMode }));

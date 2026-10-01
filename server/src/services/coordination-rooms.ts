@@ -10,12 +10,95 @@ import type {
   AddCoordinationRoomMember,
   CoordinationRoom,
   CoordinationRoomMember,
+  CoordinationRoomMessageResult,
   CreateCoordinationRoom,
+  PostCoordinationRoomMessage,
   UpdateCoordinationRoom,
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { issueService } from "./issues.js";
+import { logger } from "../middleware/logger.js";
 
 type RoomRow = typeof coordinationRooms.$inferSelect;
+
+/**
+ * The transcript issue's description.
+ *
+ * It says what the thread is, because the issue is also reachable from the
+ * normal issue list, where a bare room name would look like an unowned task
+ * nobody picked up.
+ */
+function transcriptDescription(input: CreateCoordinationRoom): string {
+  const lines = [`Transcript for the **${input.name}** coordination room.`];
+  if (input.description) lines.push("", input.description);
+  if (input.repoFullNames.length > 0) {
+    lines.push("", `Repositories: ${input.repoFullNames.join(", ")}.`);
+  }
+  lines.push(
+    "",
+    "This issue stays unassigned. Room members are woken through the room's",
+    "membership list, and their runs serialize on this issue's execution lock.",
+  );
+  return lines.join("\n");
+}
+
+/**
+ * The wake entry point, injected rather than imported.
+ *
+ * `heartbeat.wakeup` is the real implementation. Taking it as a dependency
+ * keeps this service out of the heartbeat's import graph and lets a test assert
+ * the fan-out — who is queued and in what order — without running an adapter.
+ */
+export type CoordinationRoomWakeup = (
+  agentId: string,
+  opts?: {
+    source?: "timer" | "assignment" | "on_demand" | "automation";
+    triggerDetail?: "manual" | "ping" | "callback" | "system";
+    reason?: string | null;
+    payload?: Record<string, unknown> | null;
+    requestedByActorType?: "user" | "agent" | "system";
+    requestedByActorId?: string | null;
+    contextSnapshot?: Record<string, unknown>;
+  },
+) => Promise<unknown>;
+
+/**
+ * A room wake is a mention wake. This is not a cosmetic choice.
+ *
+ * The transcript issue is deliberately unassigned, and every gate that lets a
+ * run start on an issue its agent does not own keys off this exact reason:
+ *
+ * - `decideIssueOwnership` (`modules/run-dispatch/domain/policy.ts`) cancels a
+ *   queued run as `issue_assignee_changed` unless `isInteractionWake` holds,
+ *   and `allowsIssueInteractionWake` grants that only for a wake reason in
+ *   `ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS` *with* a resolvable comment
+ *   id. A bespoke `coordination_room_message` reason would be enqueued and then
+ *   silently cancelled at dispatch.
+ * - The deferred-wake drain (`modules/wake-queue/application/use-cases.ts`)
+ *   cancels a non-assignee's queued comment wake as belonging to the current
+ *   assignee — but excludes `issue_comment_mentioned` precisely so a mention
+ *   survives. Room members queued behind another member's run need that.
+ * - `shouldAutoCheckoutIssueForWake` refuses to auto-check-out on this reason,
+ *   which is what stops N members fighting over one issue's assignment.
+ *
+ * A room does not need new wake policy; it needs a second way to decide who was
+ * named. That is the membership list, and everything after it is the existing
+ * mention path. Renaming this to something room-specific means re-deriving all
+ * three bypasses above.
+ *
+ * `source` must stay in `ISSUE_TREE_CONTROL_INTERACTION_WAKE_SOURCES` for this
+ * reason, or pause-hold admission stops treating the wake as an interaction.
+ */
+const ROOM_WAKE_REASON = "issue_comment_mentioned";
+const ROOM_WAKE_SOURCE = "comment.mention";
+
+/** Who is posting into the room. */
+export interface CoordinationRoomActor {
+  actorType: "user" | "agent" | "system";
+  actorId: string | null;
+  agentId?: string | null;
+  runId?: string | null;
+}
 
 export interface RoomWakePlan {
   roomId: string;
@@ -49,7 +132,12 @@ function toRoom(
   };
 }
 
-export function coordinationRoomService(db: Db) {
+export function coordinationRoomService(
+  db: Db,
+  deps: { wakeup?: CoordinationRoomWakeup } = {},
+) {
+  const issuesSvc = issueService(db);
+
   /**
    * `executor` lets a caller inside a transaction read its own uncommitted
    * writes. Reading through `db` from inside `create`'s transaction would see
@@ -143,6 +231,43 @@ export function coordinationRoomService(db: Db) {
     }
   }
 
+  /**
+   * Resolves who a message wakes.
+   *
+   * No mention wakes every member; a mention wakes only the named members
+   * (a mentioned non-member is ignored rather than silently joining the
+   * room). The returned agents are enqueued against the transcript issue and
+   * therefore **serialize**: `issues.executionRunId` is stamped per issue
+   * under `SELECT … FOR UPDATE`, so they run one at a time and the existing
+   * coalesce/defer behaviour absorbs duplicates. Worktrees are unaffected —
+   * every member's tree exists concurrently.
+   */
+  async function planWakeFor(
+    companyId: string,
+    roomId: string,
+    mentionAgentIds: readonly string[],
+  ): Promise<RoomWakePlan> {
+    const room = await requireRow(companyId, roomId);
+    if (room.status !== "open") {
+      throw unprocessable("This room is closed.", { code: "coordination_room_closed" });
+    }
+    if (!room.transcriptIssueId) {
+      throw unprocessable("This room has no transcript issue yet.", {
+        code: "coordination_room_transcript_missing",
+      });
+    }
+    const members = await loadMembers(companyId, roomId);
+    const memberIds = members.map((member) => member.agentId);
+    const mentioned = new Set(mentionAgentIds);
+    const broadcast = mentioned.size === 0;
+    return {
+      roomId: room.id,
+      transcriptIssueId: room.transcriptIssueId,
+      agentIds: broadcast ? memberIds : memberIds.filter((id) => mentioned.has(id)),
+      broadcast,
+    };
+  }
+
   return {
     list: async (companyId: string): Promise<CoordinationRoom[]> => {
       const rows = await db
@@ -190,7 +315,41 @@ export function coordinationRoomService(db: Db) {
             memberIds.map((agentId) => ({ companyId, roomId: room.id, agentId })),
           );
         }
-        return toRoom(room, await loadMembers(companyId, room.id, tx), null);
+        if (!input.createTranscriptIssue) {
+          return toRoom(room, await loadMembers(companyId, room.id, tx), null);
+        }
+        // The transcript is an ordinary issue, created through the issue
+        // service rather than inserted here, so it gets a real identifier,
+        // activity and sequence like every other issue. That identifier is
+        // what the thread UI and `taskKey` use.
+        //
+        // It stays **unassigned**: members are woken through the membership
+        // table, so no issue ever carries two assignees.
+        const transcript = await issuesSvc.create(
+          companyId,
+          {
+            title: input.name,
+            description: transcriptDescription(input),
+            status: "todo",
+            priority: "medium",
+            assigneeAgentId: null,
+            assigneeUserId: null,
+            // A room may be reopened and posted to for a long time; deduping
+            // it against a same-titled issue would attach the wrong thread.
+            allowDuplicate: true,
+          },
+          tx,
+        );
+        const [withTranscript] = await tx
+          .update(coordinationRooms)
+          .set({ transcriptIssueId: transcript.id })
+          .where(eq(coordinationRooms.id, room.id))
+          .returning();
+        return toRoom(
+          withTranscript ?? room,
+          await loadMembers(companyId, room.id, tx),
+          transcript.identifier ?? null,
+        );
       });
     },
 
@@ -302,40 +461,102 @@ export function coordinationRoomService(db: Db) {
       return hydrate(room);
     },
 
+    planWake: planWakeFor,
+
     /**
-     * Resolves who a message wakes.
+     * Posts a message into the room transcript and wakes the members it names.
      *
-     * No mention wakes every member; a mention wakes only the named members
-     * (a mentioned non-member is ignored rather than silently joining the
-     * room). The returned agents are enqueued against the transcript issue and
-     * therefore **serialize**: `issues.executionRunId` is stamped per issue
-     * under `SELECT … FOR UPDATE`, so they run one at a time and the existing
-     * coalesce/defer behaviour absorbs duplicates. Worktrees are unaffected —
-     * every member's tree exists concurrently.
+     * Mentions come from the body — the board composer writes mention links,
+     * exactly as it does for any issue comment — unioned with any ids the
+     * caller resolved itself. No mention wakes every member.
+     *
+     * The wakes are enqueued one at a time, in membership order, so the
+     * serialized queue is deterministic rather than whatever order a
+     * `Promise.all` happened to resolve in. They serialize regardless:
+     * `issues.executionRunId` is stamped per issue under `SELECT … FOR UPDATE`,
+     * so members run one after another on the transcript.
      */
-    planWake: async (
+    postMessage: async (
       companyId: string,
       roomId: string,
-      mentionAgentIds: readonly string[],
-    ): Promise<RoomWakePlan> => {
-      const room = await requireRow(companyId, roomId);
-      if (room.status !== "open") {
-        throw unprocessable("This room is closed.", { code: "coordination_room_closed" });
+      input: PostCoordinationRoomMessage,
+      actor: CoordinationRoomActor,
+    ): Promise<CoordinationRoomMessageResult> => {
+      if (!deps.wakeup) {
+        // A room message that wakes nobody is the room failing at the only
+        // thing it does. Fail loudly on the wiring rather than posting a
+        // comment and reporting members as woken when nothing was queued.
+        throw new Error(
+          "coordinationRoomService requires a wakeup dependency to post room messages",
+        );
       }
-      if (!room.transcriptIssueId) {
-        throw unprocessable("This room has no transcript issue yet.", {
-          code: "coordination_room_transcript_missing",
+      const bodyMentions = await issuesSvc
+        .findMentionedAgents(companyId, input.body)
+        .catch((err) => {
+          // A mention that cannot be resolved must not swallow the message.
+          // Falling back to "no mention parsed" means the room broadcasts,
+          // which wakes a superset of the intended members rather than none.
+          logger.warn({ err, roomId }, "failed to resolve room message @-mentions");
+          return [] as string[];
         });
+      const plan = await planWakeFor(companyId, roomId, [
+        ...bodyMentions,
+        ...input.mentionAgentIds,
+      ]);
+
+      const comment = await issuesSvc.addComment(
+        plan.transcriptIssueId,
+        input.body,
+        {
+          agentId: actor.actorType === "agent" ? actor.agentId ?? actor.actorId ?? undefined : undefined,
+          userId: actor.actorType === "user" ? actor.actorId ?? undefined : undefined,
+          runId: actor.runId ?? null,
+        },
+        { authorType: actor.actorType === "agent" ? "agent" : "user" },
+      );
+
+      const woke: string[] = [];
+      for (const agentId of plan.agentIds) {
+        // An agent does not wake itself on its own message.
+        if (actor.actorType === "agent" && actor.actorId === agentId) continue;
+        try {
+          await deps.wakeup(agentId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: ROOM_WAKE_REASON,
+            payload: { issueId: plan.transcriptIssueId, commentId: comment.id },
+            requestedByActorType: actor.actorType,
+            requestedByActorId: actor.actorId,
+            contextSnapshot: {
+              issueId: plan.transcriptIssueId,
+              taskId: plan.transcriptIssueId,
+              commentId: comment.id,
+              wakeCommentId: comment.id,
+              wakeReason: ROOM_WAKE_REASON,
+              source: ROOM_WAKE_SOURCE,
+              // Additive, and read by nothing that decides anything. It is
+              // here so a run can tell which room it was woken for.
+              coordinationRoomId: plan.roomId,
+              coordinationRoomBroadcast: plan.broadcast,
+            },
+          });
+          woke.push(agentId);
+        } catch (err) {
+          // One member's budget hard-stop or pause must not stop the rest of
+          // the room being woken, and the message is already posted.
+          logger.warn(
+            { err, roomId, agentId, issueId: plan.transcriptIssueId },
+            "failed to wake coordination room member",
+          );
+        }
       }
-      const members = await loadMembers(companyId, roomId);
-      const memberIds = members.map((member) => member.agentId);
-      const mentioned = new Set(mentionAgentIds);
-      const broadcast = mentioned.size === 0;
+
       return {
-        roomId: room.id,
-        transcriptIssueId: room.transcriptIssueId,
-        agentIds: broadcast ? memberIds : memberIds.filter((id) => mentioned.has(id)),
-        broadcast,
+        commentId: comment.id,
+        roomId: plan.roomId,
+        transcriptIssueId: plan.transcriptIssueId,
+        wokeAgentIds: woke,
+        broadcast: plan.broadcast,
       };
     },
 

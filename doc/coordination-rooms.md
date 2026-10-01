@@ -52,15 +52,49 @@ lock.
 
 ## Wake rules
 
-`POST /api/companies/:companyId/rooms/:roomId/wake-plan` resolves who a message
-would wake, without posting it. It is exposed separately because the fan-out is
-the easy thing to get wrong, and the board should be able to show it before
-sending.
+`POST /api/companies/:companyId/rooms/:roomId/messages` posts a message into the
+transcript and wakes the members it names.
+`POST /api/companies/:companyId/rooms/:roomId/wake-plan` resolves the same
+fan-out **without** posting, because the fan-out is the easy thing to get wrong
+and the board should be able to show it before sending.
 
 - **No mention** → every member is queued. `broadcast: true`.
 - **Mentions** → only the named members. A mentioned non-member is ignored
   rather than silently joining the room.
 - A **closed** room refuses wakes; a room with no transcript issue refuses too.
+- An agent's own message never wakes that agent.
+
+Mentions come from the message body, parsed exactly as any issue comment's are
+(`agent://<id>` links), unioned with any ids the caller passes in
+`mentionAgentIds`. The board composer already writes those links, so it needs
+neither field.
+
+Members are enqueued **one at a time, in membership order**, so the serialized
+queue is deterministic rather than whatever order a parallel dispatch resolved
+in. A member whose wake is refused — a spent budget, a paused agent — is logged
+and skipped; the message is already posted and the other members still need it.
+The response reports `wokeAgentIds`, which is the plan minus those skips.
+
+### A room wake is a mention wake
+
+The wake carries `wakeReason: "issue_comment_mentioned"` and
+`source: "comment.mention"`. That is not cosmetic, and renaming it to something
+room-specific breaks rooms in a way that only shows up in production, as runs
+that queue and are then cancelled.
+
+The transcript issue is unassigned, so every member is a non-owner, and three
+separate mechanisms key off exactly this reason to allow that:
+
+| Mechanism | Without the mention reason |
+| --- | --- |
+| `decideIssueOwnership` (`modules/run-dispatch/domain/policy.ts`) | The queued run is cancelled as `issue_assignee_changed`. It grants ownership to a non-assignee only for an *interaction wake*, which `allowsIssueInteractionWake` defines as a reason in `ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS` **plus** a resolvable comment id. |
+| The deferred-wake drain (`modules/wake-queue/application/use-cases.ts`) | A member queued behind another member's run has its wake cancelled as "belonging to the current assignee". `issue_comment_mentioned` is deliberately excluded from that rule so a mention survives. |
+| `shouldAutoCheckoutIssueForWake` | Members would try to auto-check-out the transcript, fighting over one issue's assignment. This reason explicitly refuses auto-checkout. |
+
+A room therefore needs no new wake policy. It needs a second way to decide who
+was named — that is the membership list — and everything after it is the
+existing mention path. `coordinationRoomId` rides along on the context snapshot
+so a run can tell which room woke it; nothing reads it to decide anything.
 
 ## Assignment and budgets
 
@@ -99,18 +133,22 @@ member branches stay until they are deleted.
 | `POST` | `/api/companies/:companyId/rooms/:roomId/members` |
 | `DELETE` | `/api/companies/:companyId/rooms/:roomId/members/:agentId` |
 | `POST` | `/api/companies/:companyId/rooms/:roomId/wake-plan` |
+| `POST` | `/api/companies/:companyId/rooms/:roomId/messages` |
 
 Creating a room with `seedMembersFromRepos` (the default) pre-fills members by
 matching each agent's `primaryRepoFullName` against the room's `repoFullNames`.
 Explicit `agentIds` are added on top, and members can be added or removed by
 hand afterwards.
 
+Creating a room also opens its transcript issue, through the issue service, so
+it has a real identifier, activity and sequence like any other issue — that
+identifier is what the thread UI and the session `taskKey` use. Pass
+`createTranscriptIssue: false` when an existing unassigned issue is the thread,
+then attach it with the transcript endpoint.
+
 ## Not yet implemented
 
-- Creating the transcript issue automatically. `setTranscriptIssue` attaches an
-  existing unassigned issue; the room create path does not yet make one.
-- Enqueuing the wakes. `planWake` resolves the member list; wiring it to the
-  wake queue on comment is build-list item 8's remaining work.
 - The room workspace checkout and per-member worktree creation (item 9). The
-  columns exist and are settable; nothing creates the trees yet.
+  columns exist and are settable; nothing creates the trees yet, so a room wake
+  currently runs on the member's ordinary cwd.
 - The board UI for opening a room and reading the thread.

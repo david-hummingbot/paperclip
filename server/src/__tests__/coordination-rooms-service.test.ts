@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import {
   agents,
   companies,
   coordinationRoomMembers,
   coordinationRooms,
   createDb,
+  issueComments,
   issues,
 } from "@paperclipai/db";
 import {
@@ -37,6 +39,7 @@ describeEmbeddedPostgres("coordination room service", () => {
   afterEach(async () => {
     await db.delete(coordinationRoomMembers);
     await db.delete(coordinationRooms);
+    await db.delete(issueComments);
     await db.delete(issues);
     await db.delete(agents);
     await db.delete(companies);
@@ -46,7 +49,9 @@ describeEmbeddedPostgres("coordination room service", () => {
     await tempDb?.cleanup();
   });
 
-  async function seed() {
+  async function seed(deps?: {
+    wakeup?: (agentId: string, opts?: Record<string, unknown>) => Promise<unknown>;
+  }) {
     const [company] = await db
       .insert(companies)
       .values({ name: `co-${randomUUID()}`, issuePrefix: "PC" })
@@ -62,7 +67,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       .returning();
     const byName = new Map(inserted.map((agent) => [agent.name, agent.id]));
     const { coordinationRoomService } = await import("../services/coordination-rooms.js");
-    return { svc: coordinationRoomService(db), companyId, byName };
+    return { svc: coordinationRoomService(db, deps ?? {}), companyId, byName };
   }
 
   async function seedTranscript(companyId: string, title: string) {
@@ -85,6 +90,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
       agentIds: [],
       seedMembersFromRepos: true,
+      createTranscriptIssue: false,
     });
 
     expect(room.members.map((member) => member.agentName).sort()).toEqual([
@@ -103,6 +109,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
       agentIds: [],
       seedMembersFromRepos: true,
+      createTranscriptIssue: false,
     });
     await svc.create(companyId, {
       name: "hummingbot room",
@@ -111,6 +118,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: ["hummingbot/condor", "hummingbot/hummingbot"],
       agentIds: [],
       seedMembersFromRepos: true,
+      createTranscriptIssue: false,
     });
 
     // Membership is a join table, not a single conversationAgentId: the condor
@@ -130,6 +138,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: [],
       agentIds: [],
       seedMembersFromRepos: false,
+      createTranscriptIssue: false,
     });
     const [assigned] = await db
       .insert(issues)
@@ -156,6 +165,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
       agentIds: [],
       seedMembersFromRepos: true,
+      createTranscriptIssue: false,
     });
     const transcriptIssueId = await seedTranscript(companyId, "broadcast transcript");
     await svc.setTranscriptIssue(companyId, room.id, transcriptIssueId);
@@ -178,6 +188,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
       agentIds: [],
       seedMembersFromRepos: true,
+      createTranscriptIssue: false,
     });
     await svc.setTranscriptIssue(
       companyId,
@@ -204,6 +215,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: ["hummingbot/condor"],
       agentIds: [],
       seedMembersFromRepos: true,
+      createTranscriptIssue: false,
     });
     await svc.setTranscriptIssue(
       companyId,
@@ -225,6 +237,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: [],
       agentIds: [],
       seedMembersFromRepos: false,
+      createTranscriptIssue: false,
     });
     await expect(svc.planWake(companyId, room.id, [])).rejects.toThrow(/transcript/);
   });
@@ -238,6 +251,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: [],
       agentIds: [byName.get("condor")!, byName.get("hummingbot-api")!],
       seedMembersFromRepos: false,
+      createTranscriptIssue: false,
     });
 
     await svc.addMember(companyId, room.id, {
@@ -258,6 +272,283 @@ describeEmbeddedPostgres("coordination room service", () => {
     expect(updated.members).toHaveLength(2);
   });
 
+  it("opens the room with its own unassigned transcript issue", async () => {
+    const { svc, companyId } = await seed();
+    const room = await svc.create(companyId, {
+      name: "api and condor",
+      description: "Test a change across both.",
+      projectId: null,
+      repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
+      agentIds: [],
+      seedMembersFromRepos: true,
+      createTranscriptIssue: true,
+    });
+
+    expect(room.transcriptIssueId).toBeTruthy();
+    const [transcript] = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, room.transcriptIssueId!));
+
+    // Unassigned, so the single-assignee task model holds even though two
+    // agents work the thread.
+    expect(transcript!.assigneeAgentId).toBeNull();
+    expect(transcript!.assigneeUserId).toBeNull();
+    // A real issue, with a real identifier — the thread UI and the session
+    // taskKey both depend on it.
+    expect(transcript!.identifier).toMatch(/^PC-\d+$/);
+    expect(room.transcriptIssueIdentifier).toBe(transcript!.identifier);
+  });
+
+  it("can open a room without a transcript, for an existing thread", async () => {
+    const { svc, companyId } = await seed();
+    const room = await svc.create(companyId, {
+      name: "bring your own thread",
+      description: null,
+      projectId: null,
+      repoFullNames: [],
+      agentIds: [],
+      seedMembersFromRepos: false,
+      createTranscriptIssue: false,
+    });
+
+    expect(room.transcriptIssueId).toBeNull();
+    // The attach path still works, so an existing issue can become the thread.
+    const attached = await svc.setTranscriptIssue(
+      companyId,
+      room.id,
+      await seedTranscript(companyId, "existing thread"),
+    );
+    expect(attached.transcriptIssueId).toBeTruthy();
+  });
+
+  it("posts a message and wakes every member in membership order", async () => {
+    const woken: { agentId: string; context: Record<string, unknown> }[] = [];
+    const { svc, companyId, byName } = await seed({
+      wakeup: async (agentId, opts) => {
+        woken.push({
+          agentId,
+          context: (opts?.contextSnapshot as Record<string, unknown>) ?? {},
+        });
+        return null;
+      },
+    });
+    const room = await svc.create(companyId, {
+      name: "fan out",
+      description: null,
+      projectId: null,
+      repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
+      agentIds: [],
+      seedMembersFromRepos: true,
+      createTranscriptIssue: true,
+    });
+
+    const result = await svc.postMessage(
+      companyId,
+      room.id,
+      { body: "Please run the integration suite.", mentionAgentIds: [] },
+      { actorType: "user", actorId: randomUUID(), agentId: null },
+    );
+
+    expect(result.broadcast).toBe(true);
+    expect(result.transcriptIssueId).toBe(room.transcriptIssueId);
+    // Enqueued one at a time, in membership order, so the serialized queue is
+    // deterministic rather than whatever order the wakes happened to resolve.
+    expect(result.wokeAgentIds).toEqual(room.members.map((member) => member.agentId));
+    expect(woken.map((entry) => entry.agentId)).toEqual(result.wokeAgentIds);
+
+    // Every wake names the transcript issue, which is what gives each member a
+    // session scoped to this room and what makes their runs serialize.
+    for (const entry of woken) {
+      expect(entry.context.issueId).toBe(room.transcriptIssueId);
+      expect(entry.context.coordinationRoomId).toBe(room.id);
+      expect(entry.context.wakeCommentId).toBe(result.commentId);
+    }
+
+    // The message is a real comment on the transcript.
+    const comments = await db
+      .select()
+      .from(issueComments)
+      .where(eq(issueComments.issueId, room.transcriptIssueId!));
+    expect(comments.map((comment) => comment.body)).toContain(
+      "Please run the integration suite.",
+    );
+  });
+
+  it("wakes members with a context the dispatcher accepts on an unassigned issue", async () => {
+    // The transcript is unassigned on purpose, and `decideIssueOwnership`
+    // cancels a queued run whose agent does not own the issue unless the wake
+    // is an interaction wake. Assert against the real policy predicate, not a
+    // string literal: if the allowed set changes, room wakes must break here
+    // rather than in production as runs that queue and are then cancelled.
+    const { allowsIssueInteractionWake } = await import(
+      "../modules/run-dispatch/domain/wake-context.js"
+    );
+    const { ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS } = await import(
+      "../services/issue-tree-control.js"
+    );
+
+    const contexts: Record<string, unknown>[] = [];
+    const { svc, companyId } = await seed({
+      wakeup: async (_agentId, opts) => {
+        contexts.push((opts?.contextSnapshot as Record<string, unknown>) ?? {});
+        return null;
+      },
+    });
+    const room = await svc.create(companyId, {
+      name: "dispatch shape",
+      description: null,
+      projectId: null,
+      repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
+      agentIds: [],
+      seedMembersFromRepos: true,
+      createTranscriptIssue: true,
+    });
+
+    await svc.postMessage(
+      companyId,
+      room.id,
+      { body: "Kick off the cross-repo run.", mentionAgentIds: [] },
+      { actorType: "user", actorId: randomUUID(), agentId: null },
+    );
+
+    expect(contexts).toHaveLength(2);
+    for (const context of contexts) {
+      expect(
+        allowsIssueInteractionWake(context, ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS),
+      ).toBe(true);
+    }
+
+    // And the transcript really is unassigned, so this bypass is load-bearing
+    // rather than incidental.
+    const [transcript] = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, room.transcriptIssueId!));
+    expect(transcript!.assigneeAgentId).toBeNull();
+  });
+
+  it("wakes only the agents the message body mentions", async () => {
+    const woken: string[] = [];
+    const { svc, companyId, byName } = await seed({
+      wakeup: async (agentId) => {
+        woken.push(agentId);
+        return null;
+      },
+    });
+    const room = await svc.create(companyId, {
+      name: "mention fan out",
+      description: null,
+      projectId: null,
+      repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
+      agentIds: [],
+      seedMembersFromRepos: true,
+      createTranscriptIssue: true,
+    });
+
+    const condor = byName.get("condor")!;
+    // The board composer writes mention links into the body; a room message is
+    // parsed exactly like any other issue comment, so no separate id list is
+    // needed to narrow the fan-out.
+    const result = await svc.postMessage(
+      companyId,
+      room.id,
+      { body: `[@condor](agent://${condor}) can you take this?`, mentionAgentIds: [] },
+      { actorType: "user", actorId: randomUUID(), agentId: null },
+    );
+
+    expect(result.broadcast).toBe(false);
+    expect(result.wokeAgentIds).toEqual([condor]);
+    expect(woken).toEqual([condor]);
+  });
+
+  it("does not wake an agent on its own message", async () => {
+    const woken: string[] = [];
+    const { svc, companyId, byName } = await seed({
+      wakeup: async (agentId) => {
+        woken.push(agentId);
+        return null;
+      },
+    });
+    const room = await svc.create(companyId, {
+      name: "self post",
+      description: null,
+      projectId: null,
+      repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
+      agentIds: [],
+      seedMembersFromRepos: true,
+      createTranscriptIssue: true,
+    });
+
+    const condor = byName.get("condor")!;
+    const result = await svc.postMessage(
+      companyId,
+      room.id,
+      { body: "Suite is green on my side.", mentionAgentIds: [] },
+      { actorType: "agent", actorId: condor, agentId: condor },
+    );
+
+    // The other member hears about it; the author does not wake itself into a
+    // loop.
+    expect(result.wokeAgentIds).not.toContain(condor);
+    expect(result.wokeAgentIds).toHaveLength(1);
+    expect(woken).toEqual(result.wokeAgentIds);
+  });
+
+  it("still posts the message when one member's wake is refused", async () => {
+    const { svc, companyId, byName } = await seed({
+      wakeup: async (agentId) => {
+        // A spent budget or a paused agent refuses its wake. The message is
+        // already posted and the other members still need it.
+        if (agentId === byName.get("condor")) throw new Error("budget exhausted");
+        return null;
+      },
+    });
+    const room = await svc.create(companyId, {
+      name: "partial wake",
+      description: null,
+      projectId: null,
+      repoFullNames: ["hummingbot/hummingbot-api", "hummingbot/condor"],
+      agentIds: [],
+      seedMembersFromRepos: true,
+      createTranscriptIssue: true,
+    });
+
+    const result = await svc.postMessage(
+      companyId,
+      room.id,
+      { body: "Status?", mentionAgentIds: [] },
+      { actorType: "user", actorId: randomUUID(), agentId: null },
+    );
+
+    expect(result.commentId).toBeTruthy();
+    expect(result.wokeAgentIds).not.toContain(byName.get("condor"));
+    expect(result.wokeAgentIds).toHaveLength(1);
+  });
+
+  it("refuses a message to a closed room", async () => {
+    const { svc, companyId } = await seed({ wakeup: async () => null });
+    const room = await svc.create(companyId, {
+      name: "closing time",
+      description: null,
+      projectId: null,
+      repoFullNames: ["hummingbot/condor"],
+      agentIds: [],
+      seedMembersFromRepos: true,
+      createTranscriptIssue: true,
+    });
+    await svc.update(companyId, room.id, { status: "closed" });
+
+    await expect(
+      svc.postMessage(
+        companyId,
+        room.id,
+        { body: "one more thing", mentionAgentIds: [] },
+        { actorType: "user", actorId: randomUUID(), agentId: null },
+      ),
+    ).rejects.toThrow(/closed/);
+  });
+
   it("hides another company's room behind a 404", async () => {
     const { svc, companyId } = await seed();
     const room = await svc.create(companyId, {
@@ -267,6 +558,7 @@ describeEmbeddedPostgres("coordination room service", () => {
       repoFullNames: [],
       agentIds: [],
       seedMembersFromRepos: false,
+      createTranscriptIssue: false,
     });
     const [other] = await db
       .insert(companies)

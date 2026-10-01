@@ -8,12 +8,18 @@ import {
 } from "@paperclipai/shared";
 import { validate } from "../middleware/validate.js";
 import { logActivity } from "../services/index.js";
-import { coordinationRoomService } from "../services/coordination-rooms.js";
+import {
+  coordinationRoomService,
+  type CoordinationRoomWakeup,
+} from "../services/coordination-rooms.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
-export function coordinationRoomRoutes(db: Db) {
+export function coordinationRoomRoutes(
+  db: Db,
+  deps: { wakeup?: CoordinationRoomWakeup } = {},
+) {
   const router = Router();
-  const svc = coordinationRoomService(db);
+  const svc = coordinationRoomService(db, { wakeup: deps.wakeup });
 
   router.get("/companies/:companyId/rooms", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -135,6 +141,46 @@ export function coordinationRoomRoutes(db: Db) {
         req.body.mentionAgentIds,
       );
       res.json(plan);
+    },
+  );
+
+  /**
+   * Posts a message into the room transcript and wakes the members it names.
+   *
+   * The response reports who was actually queued, which is not always the
+   * whole plan: a member whose wake is refused — a spent budget, a paused
+   * agent — is logged and skipped rather than failing the message that the
+   * other members already need to see.
+   */
+  router.post(
+    "/companies/:companyId/rooms/:roomId/messages",
+    validate(postCoordinationRoomMessageSchema),
+    async (req, res) => {
+      const companyId = req.params.companyId as string;
+      assertCompanyAccess(req, companyId);
+      const roomId = req.params.roomId as string;
+      const actor = getActorInfo(req);
+      const result = await svc.postMessage(companyId, roomId, req.body, {
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+      });
+      await logActivity(db, {
+        companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        action: "coordination_room.message_posted",
+        entityType: "coordination_room",
+        entityId: roomId,
+        details: {
+          commentId: result.commentId,
+          broadcast: result.broadcast,
+          wokeAgentIds: result.wokeAgentIds,
+        },
+      });
+      res.status(201).json(result);
     },
   );
 
