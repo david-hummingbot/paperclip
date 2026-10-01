@@ -9,6 +9,28 @@ room does not replace that. It exists for the effort that spans repos — testin
 a change across hummingbot-api and condor — where the agents that own those
 repos need a shared thread and a shared checkout.
 
+## The repo agent is the other half
+
+Standing review ownership lives on the agent, not on the room:
+`agents.primaryRepoFullName` is the GitHub repo an agent owns, written
+`owner/name`. It is **unique per company** — "which agent owns this repo" has
+to have one answer, because room member seeding reads it and two claimants
+would silently seed both. A partial index does that, so the many agents with no
+primary repo do not collide with each other. Two different companies may each
+own the same public repo.
+
+What it drives today: room member seeding, through
+`agentService.findByPrimaryRepos`, and anything that wants to show who owns a
+repo. **It does not yet route GitHub webhooks.** A GitHub review still reaches
+an agent through `chat_endpoints.assignedAgentId`, and the two bindings are not
+cross-checked — `chat_endpoints.publicId` is Paperclip's own endpoint
+identifier, not a GitHub repo id, so there is nothing to join them on. Setting a
+primary repo and binding a GitHub endpoint are two separate acts today.
+
+Handing a repo over is two ordinary updates: the owner releases it
+(`primaryRepoFullName: null`), the successor claims it. A claim on a repo
+another agent holds is a 409 with `agent_primary_repo_taken`.
+
 ## Why it is not a chat channel
 
 The transcript is an **issue**, so comments, activity, budgets and the existing
@@ -109,18 +131,77 @@ Each member's own cap applies as usual; a room does not add a second cap.
 
 ## Room workspace
 
-A room can hold a shared integration checkout, separate from every member's
-everyday checkout, with `workspaceRootPath` on the room and a `worktreePath`
-and `branchName` per member.
+A room holds one shared checkout for the effort, separate from every member's
+everyday checkout, and cuts one git worktree and branch per member from it.
+`POST /api/companies/:companyId/rooms/:roomId/workspace` creates them.
 
 Each member works in their own tree: the condor agent's tree is not the
-hummingbot-api agent's tree. A room wake sets that agent's cwd to their
-worktree. The agent's computer does not change — a Docker or SSH agent runs the
-tree on that computer, a `shared` agent on the Paperclip host. **A room never
-allocates a second machine.**
+hummingbot-api agent's tree, and both can hold uncommitted work at once. Only
+*runs* serialize, on the transcript issue's execution lock. A room wake sets
+that agent's cwd to their worktree.
 
-Closing a room stops wakes and leaves every primary checkout in place. Unmerged
-member branches stay until they are deleted.
+The branch is `room/<transcript identifier>/<agent name>`, so two rooms never
+collide and neither touches the agent's primary-repo review branch.
+
+**None of this is new worktree machinery.** `realizeExecutionWorkspace` already
+cuts a branch and tree from a base checkout, already derives both from a
+template carrying `{{agent.name}}`, and already holds the coherence checks,
+reuse paths and ownership rules debugged against real repositories. A room
+supplies the base checkout and the template; everything after that is the
+existing path. Calling the endpoint again is therefore safe and cheap — a
+member with a coherent tree keeps it.
+
+One member's failure is reported in `skipped` and does not fail the others. A
+room of three should not be unusable because one branch is in a state that needs
+an operator.
+
+### The run must not nest a tree inside a tree
+
+A room run's cwd is already the member's worktree, so the agent's own
+`workspaceStrategy` is pinned to `project_primary` for that run
+(`pinRoomWorktreeWorkspaceStrategy`). Without it, an agent configured for
+isolated workspaces would have `realizeExecutionWorkspace` cut a *second*
+worktree from inside its room tree and run on an issue-named branch instead of
+the one the room gave it — both members would then be working somewhere other
+than the trees the room created.
+
+### Where the checkout comes from
+
+`workspaceRootPath` if set; otherwise the room's project's first workspace with
+a checkout on disk, so a room linked to a project needs no hand-set path. The
+resolved root is written back to the room.
+
+**Paperclip does not clone the room's repos itself yet.** `repoFullNames`
+records which repos the effort spans and seeds the member list; it does not
+drive a checkout. Point the room at a checkout that already has them, or link it
+to a project.
+
+### Agents on their own computer are refused, not faked
+
+A member whose `computePlacement` is `docker` or `ssh` is **skipped** with a
+reason, and no path is recorded for them.
+
+The doc used to say a Docker or SSH agent runs its room tree on that computer.
+Nothing implements that. A tree cut here is on the Paperclip host, and the
+remote transports discard the host path outright —
+`adapterExecutionTargetRemoteCwd` returns the target's own fixed `remoteCwd`,
+and `shapePaperclipWorkspaceEnvForExecution` sets `workspaceWorktreePath: null`
+so no host path leaks into a remote environment. There is no remote-git
+abstraction: `realizeExecutionWorkspace` shells out to the Paperclip host's
+filesystem unconditionally.
+
+So a docker member would run in its container's fixed `/workspace` while the
+room claimed it had a tree. Recording a path that is a lie is worse than
+recording none, so the member is skipped and the run falls through to that
+agent's ordinary cwd. Making this work needs either a remote `git worktree add`
+through `runAdapterExecutionTargetShellCommand`, or a per-member `remoteCwd` via
+`overrideAdapterExecutionTargetRemoteCwd` — that seam exists and nothing calls
+it for worktrees.
+
+Closing a room stops wakes and leaves every primary checkout in place. Removing
+a member leaves their tree: it may hold uncommitted work. Unmerged member
+branches stay until they are deleted. **A room never allocates a second
+machine.**
 
 ## API
 
@@ -134,6 +215,7 @@ member branches stay until they are deleted.
 | `DELETE` | `/api/companies/:companyId/rooms/:roomId/members/:agentId` |
 | `POST` | `/api/companies/:companyId/rooms/:roomId/wake-plan` |
 | `POST` | `/api/companies/:companyId/rooms/:roomId/messages` |
+| `POST` | `/api/companies/:companyId/rooms/:roomId/workspace` |
 
 Creating a room with `seedMembersFromRepos` (the default) pre-fills members by
 matching each agent's `primaryRepoFullName` against the room's `repoFullNames`.
@@ -148,7 +230,15 @@ then attach it with the transcript endpoint.
 
 ## Not yet implemented
 
-- The room workspace checkout and per-member worktree creation (item 9). The
-  columns exist and are settable; nothing creates the trees yet, so a room wake
-  currently runs on the member's ordinary cwd.
+- **Cloning the room's repos.** `repoFullNames` seeds members; it does not build
+  a checkout. The room must point at one.
+- **Room trees for `docker` and `ssh` members**, which needs remote git. Those
+  members are skipped with a reason today.
+- **Per-member trees are not reaped.** Deliberately: the design keeps unmerged
+  work. They carry no `execution_workspaces` row, so the terminal-workspace
+  reaper never sees them, and removing a member or closing a room leaves the
+  tree. Reclaiming disk is an operator action.
+- **Secondary repos are per-tree.** The multi-repo layout clones a project's
+  other repos into `<cwd>/.paperclip-repositories/`, so each member's tree gets
+  its own copies rather than sharing the room's.
 - The board UI for opening a room and reading the thread.

@@ -12,6 +12,7 @@ import {
   coordinationRoomService,
   type CoordinationRoomWakeup,
 } from "../services/coordination-rooms.js";
+import { coordinationRoomWorkspaceService } from "../services/coordination-room-workspace.js";
 import { assertCompanyAccess, getActorInfo } from "./authz.js";
 
 export function coordinationRoomRoutes(
@@ -20,6 +21,7 @@ export function coordinationRoomRoutes(
 ) {
   const router = Router();
   const svc = coordinationRoomService(db, { wakeup: deps.wakeup });
+  const workspaceSvc = coordinationRoomWorkspaceService(db);
 
   router.get("/companies/:companyId/rooms", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -183,6 +185,37 @@ export function coordinationRoomRoutes(
       res.status(201).json(result);
     },
   );
+
+  /**
+   * Gives every member of the room their own worktree in the room's checkout.
+   *
+   * Idempotent: a member who already has a coherent tree keeps it, so this is
+   * safe to call again after adding members. A member whose tree cannot be
+   * created is reported in `skipped` rather than failing the others — a room of
+   * three should not be unusable because one branch needs an operator.
+   */
+  router.post("/companies/:companyId/rooms/:roomId/workspace", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const roomId = req.params.roomId as string;
+    const result = await workspaceSvc.ensureRoomWorkspace(companyId, roomId);
+    const actor = getActorInfo(req);
+    await logActivity(db, {
+      companyId,
+      actorType: actor.actorType,
+      actorId: actor.actorId,
+      agentId: actor.agentId,
+      action: "coordination_room.workspace_prepared",
+      entityType: "coordination_room",
+      entityId: roomId,
+      details: {
+        workspaceRootPath: result.workspaceRootPath,
+        worktrees: result.members.length,
+        skipped: result.skipped.length,
+      },
+    });
+    res.json(result);
+  });
 
   return router;
 }
