@@ -91,6 +91,43 @@ heartbeat upserts it with `ON CONFLICT ("driver") WHERE driver = 'local'`,
 which only matches an index with exactly that predicate. A per-agent computer
 is a `docker` or `ssh` row, never `local`.
 
+## SSH keys
+
+An `ssh` computer authenticates with a private key resolved from the secret
+store at run time, named by `privateKeySecretRef` on the environment config.
+Two endpoints cover the two ways an operator has a key:
+
+| Method | Path | |
+| --- | --- | --- |
+| `POST` | `/api/companies/:companyId/ssh-keys` | Omit `privateKey` to generate a fresh ed25519 key; supply one to import a key you already hold. |
+| `GET` | `/api/companies/:companyId/ssh-keys/:secretId/public-key` | The public half, read from the secret's metadata. |
+
+The response carries the public key, its fingerprint, and the `secretId` to put
+in `privateKeySecretRef`. **The private key is never returned**, including in
+the response that creates it.
+
+`ssh-keygen` does both jobs, and that is deliberate. The transport writes the
+key to a temp file and hands it to the `ssh` CLI with `-i`, so the only format
+that matters is the one that client reads — generating with Node's crypto would
+produce PKCS#8 PEM, which OpenSSH does not accept for ed25519, and the key would
+store cleanly and then fail at connect time. On the import path `ssh-keygen -y`
+derives the public half, which is also the validation: it rejects anything the
+client could not use.
+
+A **passphrase-protected key is refused**. Runs connect non-interactively and
+nothing can answer the prompt, so accepting one would look like success and fail
+at the first run. A generated key has no passphrase for the same reason; its
+protection is the secret store.
+
+Creating the key does not install it. Two steps remain, and both are the
+existing paths:
+
+1. Put the public key in the target host's `authorized_keys`.
+2. Reference the secret from the environment's `privateKeySecretRef`.
+   Environment create and update bind the secret to that environment; the
+   secret store refuses a read by a consumer the secret is not bound to, so a
+   key that is stored but unreferenced cannot be resolved by a run.
+
 ## API
 
 | Method | Path |
