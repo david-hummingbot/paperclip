@@ -9,14 +9,6 @@ import { issueThreadInteractionService } from "../services/issue-thread-interact
 import { pendingNativeGovernance } from "../services/native-runtime/native-run-finalizer.js";
 import { getConversationConfirmationContext } from "../services/conversation-confirmation-context.js";
 
-const { resolvedTelemetry } = vi.hoisted(() => ({ resolvedTelemetry: vi.fn() }));
-vi.mock("@paperclipai/shared/telemetry", async importOriginal => ({
-  ...await importOriginal<Record<string, unknown>>(), trackInteractionResolved: resolvedTelemetry, trackInteractionCreated: vi.fn(),
-}));
-vi.mock("../telemetry.js", async importOriginal => ({
-  ...await importOriginal<Record<string, unknown>>(), getTelemetryClient: () => ({}),
-}));
-
 const support = await getEmbeddedPostgresTestSupport();
 (support.supported ? describe : describe.skip)("conversational confirmation resolution", () => {
   let temporary: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
@@ -139,24 +131,26 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(answer).toMatchObject({ deduplicated: false, interaction: { status: "accepted", resolvedByAgentId: f.agentId, resolvedByRunId: f.runId, resolvedByUserId: null, result: { outcome: "accepted", commentId: f.comment.id, ...(checkbox ? { selectedOptionIds: ["note"] } : {}) } } });
     expect(await audit(f.issueId)).toMatchObject([{ action: "issue.thread_interaction_accepted", details: { responseCommentId: f.comment.id, responseUserId: "operator" } }]);
   });
-  it.each(["accept", "reject"] as const)("does not emit a %s resolution when the provenance audit rolls back", async decision => {
+  it.each(["accept", "reject"] as const)("rolls a %s resolution back with the provenance audit, then resolves once on retry", async decision => {
     const f = await seed();
     await db.execute(sql.raw(`CREATE FUNCTION fail_confirmation_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.entity_id = '${f.issueId}' THEN RAISE EXCEPTION 'audit write failed'; END IF; RETURN NEW; END $$`));
     await db.execute(sql.raw("CREATE TRIGGER fail_confirmation_audit BEFORE INSERT ON activity_log FOR EACH ROW EXECUTE FUNCTION fail_confirmation_audit()"));
-    resolvedTelemetry.mockClear();
     try {
       await expect(resolveConfirmationFromComment(db, { ...f.args, input: { commentId: f.comment.id, decision } })).rejects.toThrow();
       expect((await readCard(f.card.id)).status).toBe("pending");
       expect(await audit(f.issueId)).toHaveLength(0);
-      expect(resolvedTelemetry).not.toHaveBeenCalled();
     } finally {
       await db.execute(sql.raw("DROP TRIGGER fail_confirmation_audit ON activity_log"));
       await db.execute(sql.raw("DROP FUNCTION fail_confirmation_audit()"));
     }
-    await resolveConfirmationFromComment(db, { ...f.args, input: { commentId: f.comment.id, decision } });
-    expect(resolvedTelemetry).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ status: decision === "accept" ? "accepted" : "rejected" }));
-    await resolveConfirmationFromComment(db, { ...f.args, input: { commentId: f.comment.id, decision } });
-    expect(resolvedTelemetry).toHaveBeenCalledTimes(1);
+    // With the failing trigger gone the retry lands exactly once: the card
+    // reaches its resolved status, and a second attempt deduplicates instead
+    // of resolving again.
+    const retried = await resolveConfirmationFromComment(db, { ...f.args, input: { commentId: f.comment.id, decision } });
+    expect(retried).toMatchObject({ deduplicated: false });
+    expect((await readCard(f.card.id)).status).toBe(decision === "accept" ? "accepted" : "rejected");
+    const repeated = await resolveConfirmationFromComment(db, { ...f.args, input: { commentId: f.comment.id, decision } });
+    expect(repeated).toMatchObject({ deduplicated: true });
   });
   it("records refusal and its reason on the card", async () => {
     const f = await seed();

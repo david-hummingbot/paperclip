@@ -158,7 +158,7 @@ describe("heartbeat retry module callbacks", () => {
     else await expect(retries.finalizeAiConnectionBusyDeferral(run, new HttpError(409, "busy"), true)).rejects.toThrow("release failed");
     expect(deps.setWakeupStatus).toHaveBeenCalledWith("wake", "cancelled", expect.any(Object));
     expect(deps.releaseIssueExecutionAndPromote).toHaveBeenCalledWith(run);
-    expect(deps.finalizeAgentStatus).toHaveBeenCalledWith("agent", "cancelled", null, { wasFirstHeartbeat: true });
+    expect(deps.finalizeAgentStatus).toHaveBeenCalledWith("agent", "cancelled", null);
     expect(deps.finalizeAgentStatus).toHaveBeenCalledAfter(deps.releaseIssueExecutionAndPromote);
     expect(database.access).not.toHaveBeenCalled();
   });

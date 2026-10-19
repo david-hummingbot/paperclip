@@ -139,7 +139,6 @@ const mockTelemetryClient = vi.hoisted(() => ({
   track: vi.fn(),
   hashPrivateRef: vi.fn(() => "test-private-reference"),
 }));
-const mockTrackAgentFirstHeartbeat = vi.hoisted(() => vi.fn());
 const mockTerminateLocalService = vi.hoisted(() => vi.fn());
 const mockDetachNativeSessionsForRestart = vi.hoisted(() => vi.fn());
 const mockCloseIdleWarmNativeSessionsForRestart = vi.hoisted(() => vi.fn());
@@ -165,9 +164,6 @@ const mockAdapterExecute = vi.hoisted(() =>
   })),
 );
 
-vi.mock("../telemetry.ts", () => ({
-  getTelemetryClient: () => mockTelemetryClient,
-}));
 
 const mockCaptureRunFailure = vi.hoisted(() => vi.fn());
 vi.mock("../sentry.ts", async () => {
@@ -207,16 +203,6 @@ vi.mock("../services/local-service-supervisor.js", async () => {
   return {
     ...actual,
     terminateLocalService: mockTerminateLocalService,
-  };
-});
-
-vi.mock("@paperclipai/shared/telemetry", async () => {
-  const actual = await vi.importActual<
-    typeof import("@paperclipai/shared/telemetry")
-  >("@paperclipai/shared/telemetry");
-  return {
-    ...actual,
-    trackAgentFirstHeartbeat: mockTrackAgentFirstHeartbeat,
   };
 });
 

@@ -130,20 +130,10 @@ const mockAccessService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockTrackRoutineCreated = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 
 function registerModuleMocks() {
   vi.doMock("../routes/authz.js", async () => vi.importActual("../routes/authz.js"));
 
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackRoutineCreated: mockTrackRoutineCreated,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
 
   vi.doMock("../services/access.js", () => ({
     accessService: () => mockAccessService,
@@ -196,7 +186,6 @@ describe("routine routes", () => {
 
   beforeEach(() => {
     vi.resetModules();
-    vi.doUnmock("@paperclipai/shared/telemetry");
     vi.doUnmock("../telemetry.js");
     vi.doUnmock("../services/access.js");
     vi.doUnmock("../services/index.js");
@@ -207,7 +196,6 @@ describe("routine routes", () => {
     vi.doUnmock("../middleware/index.js");
     registerModuleMocks();
     vi.clearAllMocks();
-    mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockRoutineService.list.mockResolvedValue([routine]);
     mockRoutineService.create.mockResolvedValue(routine);
     mockRoutineService.get.mockResolvedValue(routine);
@@ -681,21 +669,5 @@ describe("routine routes", () => {
       userId: "board-user",
       runId: null,
     });
-    try {
-      expect(mockTrackRoutineCreated).toHaveBeenCalledWith(expect.anything());
-    } catch (error) {
-      // Report mock wiring without importing modules again or changing timing.
-      console.error("Routine creation telemetry mock diagnostic", {
-        clientGetterCalls: mockGetTelemetryClient.mock.calls.length,
-        clientGetterResults: mockGetTelemetryClient.mock.results.slice(-4).map(result => ({
-          type: result.type,
-          truthy: Boolean(result.value),
-        })),
-        trackingCalls: mockTrackRoutineCreated.mock.calls.length,
-        createCalls: mockRoutineService.create.mock.calls.length,
-        activityCalls: mockLogActivity.mock.calls.length,
-      });
-      throw error;
-    }
   });
 });

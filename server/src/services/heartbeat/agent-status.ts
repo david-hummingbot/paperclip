@@ -1,7 +1,5 @@
 import { agents, heartbeatRuns, type Db } from "@paperclipai/db";
 import { and, asc, desc, eq, lte, sql } from "drizzle-orm";
-import { trackAgentFirstHeartbeat } from "@paperclipai/shared/telemetry";
-import { getTelemetryClient } from "../../telemetry.js";
 import { logActivity, publishActivity, type ActivityPublication } from "../activity-log.js";
 import { publishLiveEvent } from "../live-events.js";
 import { finishedIdleRun, finishedIdleWake, finishedFailedIdleLease } from "../idle-work-proof.js";
@@ -77,7 +75,7 @@ export function createHeartbeatAgentStatus(db: Db) {
     agentId: string,
     outcome: Outcome,
     failureReason?: string | null,
-    options?: { keepIdleOnFailure?: boolean; wasFirstHeartbeat?: boolean },
+    options?: { keepIdleOnFailure?: boolean },
   ) {
     const result = await db.transaction(async (tx) => {
       const [existing] = await tx.select().from(agents)
@@ -97,13 +95,9 @@ export function createHeartbeatAgentStatus(db: Db) {
         updatedAt: now,
       }).where(and(eq(agents.id, agentId), eq(agents.companyId, existing.companyId),
         eq(agents.lifecycleState, "ready"))).returning();
-      return { updated, isFirstHeartbeat: options?.wasFirstHeartbeat ?? !existing.lastHeartbeatAt };
+      return { updated };
     });
     if (!result?.updated) return;
-    if (result.isFirstHeartbeat) {
-      const client = getTelemetryClient();
-      if (client) trackAgentFirstHeartbeat(client, { agentRole: result.updated.role, agentId: result.updated.id });
-    }
     publishStatus(result.updated, outcome);
   }
 

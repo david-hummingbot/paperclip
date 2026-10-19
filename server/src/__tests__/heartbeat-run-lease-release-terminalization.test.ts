@@ -16,7 +16,6 @@ import {
 } from "./helpers/embedded-postgres.js";
 
 const mockTelemetryClient = vi.hoisted(() => ({ track: vi.fn() }));
-vi.mock("../telemetry.ts", () => ({ getTelemetryClient: () => mockTelemetryClient }));
 
 import { heartbeatService } from "../services/heartbeat.ts";
 

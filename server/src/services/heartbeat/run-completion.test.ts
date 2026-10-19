@@ -29,7 +29,7 @@ function callbacks(db: Db) {
     enqueueWakeup: vi.fn(),
     getCurrentUserRedactionOptions: vi.fn(async () => ({ enabled: false })),
     getAgentInvokability: vi.fn<HeartbeatLifecycleDependencies["getAgentInvokability"]>(async () => ({ invokable: true })),
-    emitTerminalAgentTaskRun: vi.fn(), budgetHooks: {},
+    settleTerminalRun: vi.fn(), budgetHooks: {},
   } satisfies HeartbeatLifecycleDependencies;
   const lifecycle = createHeartbeatLifecycle(db, lifecycleDeps);
   return {
@@ -50,7 +50,6 @@ function callbacks(db: Db) {
     updateRuntimeState: vi.fn<Dependencies["updateRuntimeState"]>(),
     scheduleBoundedRetryForRun: vi.fn<Dependencies["scheduleBoundedRetryForRun"]>(),
     scheduleInteractionContinuationInfrastructureRetryIfEligible: vi.fn<Dependencies["scheduleInteractionContinuationInfrastructureRetryIfEligible"]>(async () => null),
-    timerClaimWasFirstHeartbeat: vi.fn<Dependencies["timerClaimWasFirstHeartbeat"]>(() => undefined),
     releaseIssueExecutionAndPromote: vi.fn<Dependencies["releaseIssueExecutionAndPromote"]>(async () => undefined),
     finalizeAgentStatus: vi.fn<Dependencies["finalizeAgentStatus"]>(async () => undefined),
     enqueueWakeup: vi.fn<Dependencies["enqueueWakeup"]>(),

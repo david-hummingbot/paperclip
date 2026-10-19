@@ -40,7 +40,6 @@ import {
   companySkillUpdateSchema,
   companySkillVersionCreateSchema,
 } from "@paperclipai/shared";
-import { trackSkillImported } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import {
   accessService,
@@ -57,7 +56,6 @@ import {
 } from "../services/skills-catalog.js";
 import { badRequest, conflict, forbidden, unauthorized, notFound, HttpError } from "../errors.js";
 import { assertAuthenticated, assertCompanyAccess, getActorInfo } from "./authz.js";
-import { getTelemetryClient } from "../telemetry.js";
 import {
   companySkillPolicyService,
   normalizeSkillPolicySourceType,
@@ -70,14 +68,6 @@ import {
   type SkillPolicyDecision,
   type SkillPolicyEvaluationResource,
 } from "@paperclipai/shared";
-
-type SkillTelemetryInput = {
-  key: string;
-  slug: string;
-  sourceType: string;
-  sourceLocator: string | null;
-  metadata: Record<string, unknown> | null;
-};
 
 type SkillPolicyDenialResponse = {
   code: "skill_policy_denied";
@@ -125,21 +115,6 @@ export function companySkillRoutes(db: Db) {
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
-  }
-
-  function deriveTrackedSkillRef(skill: SkillTelemetryInput): string | null {
-    if (skill.metadata?.skillSourceId) return null;
-    if (skill.sourceType === "skills_sh") {
-      return skill.key;
-    }
-    if (skill.sourceType !== "github") {
-      return null;
-    }
-    const hostname = asString(skill.metadata?.hostname);
-    if (hostname !== "github.com") {
-      return null;
-    }
-    return skill.key;
   }
 
   function firstQueryString(value: unknown): string | undefined {
@@ -1422,16 +1397,6 @@ export function companySkillRoutes(db: Db) {
           warningCount: result.warnings.length,
         },
       });
-      const telemetryClient = getTelemetryClient();
-      if (telemetryClient) {
-        for (const skill of result.imported) {
-          trackSkillImported(telemetryClient, {
-            sourceType: skill.sourceType,
-            skillRef: deriveTrackedSkillRef(skill),
-          });
-        }
-      }
-
       res.status(201).json(result);
     },
   );

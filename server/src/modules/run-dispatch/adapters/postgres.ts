@@ -26,7 +26,6 @@ import { connectionContinuationPendingResponse } from "../../../services/satisfi
 import { collectDispositionRepairSourceState } from "../../../services/recovery/disposition-repair.js";
 import { legacyDispositionEpisode, legacyDispositionFingerprint } from "../../../services/recovery/legacy-continuation.js";
 import { appendHeartbeatRunEvent } from "../../../services/heartbeat-run-events.js";
-import { emitAgentTaskRun } from "../../../services/agent-task-run-telemetry.js";
 import { issueService } from "../../../services/issues.js";
 import {
   issueTreeControlService,
@@ -870,7 +869,6 @@ export function createPostgresRunDispatchAdapter(
     // published before its cancellation is durable, and never published at
     // all if the transaction rolled back.
     if (transactionResult.telemetryRun) {
-      void emitAgentTaskRun(db, transactionResult.telemetryRun);
     }
 
     return transactionResult.outcome;

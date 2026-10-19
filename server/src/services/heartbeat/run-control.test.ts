@@ -52,7 +52,7 @@ function callbacks(db: Db) {
     enqueueWakeup: vi.fn<HeartbeatLifecycleDependencies["enqueueWakeup"]>(),
     getCurrentUserRedactionOptions: vi.fn(async () => ({})),
     getAgentInvokability: vi.fn<HeartbeatLifecycleDependencies["getAgentInvokability"]>(async () => ({ invokable: true })),
-    emitTerminalAgentTaskRun: vi.fn<HeartbeatLifecycleDependencies["emitTerminalAgentTaskRun"]>(),
+    settleTerminalRun: vi.fn<HeartbeatLifecycleDependencies["settleTerminalRun"]>(),
     budgetHooks: {},
   } satisfies HeartbeatLifecycleDependencies;
   const lifecycle = createHeartbeatLifecycle(db, lifecycleDependencies);
@@ -71,7 +71,6 @@ function callbacks(db: Db) {
     enqueueWakeup: lifecycleDependencies.enqueueWakeup,
     startNextQueuedRunForAgent: vi.fn<HeartbeatRunControlDependencies["startNextQueuedRunForAgent"]>(),
     sweepPendingCleanupLeases: vi.fn<HeartbeatRunControlDependencies["sweepPendingCleanupLeases"]>(),
-    timerClaimWasFirstHeartbeat: vi.fn<HeartbeatRunControlDependencies["timerClaimWasFirstHeartbeat"]>(() => undefined),
     wakeQueue: { releaseIssueExecution: vi.fn<HeartbeatRunControlDependencies["wakeQueue"]["releaseIssueExecution"]>(async () => ({ outcome: { kind: "released" }, postCommitEffects: [] })) },
     applyWakeQueuePostCommitEffects: vi.fn(async () => undefined),
     getSchedulingSuppression: vi.fn(async () => ({ suppressed: false })),

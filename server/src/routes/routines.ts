@@ -11,12 +11,10 @@ import {
   updateRoutineSchema,
   updateRoutineTriggerSchema,
 } from "@paperclipai/shared";
-import { trackRoutineCreated } from "@paperclipai/shared/telemetry";
 import { validate, validateIssueMutationBody } from "../middleware/validate.js";
 import { accessService, documentAnnotationService, logActivity, routineService } from "../services/index.js";
 import { assertCompanyAccess, getAccessibleResource, getActorInfo, hasCompanyAccess } from "./authz.js";
 import { badRequest, forbidden, unauthorized, unsupportedMediaType } from "../errors.js";
-import { getTelemetryClient } from "../telemetry.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 
 export function routineRoutes(
@@ -176,10 +174,6 @@ export function routineRoutes(
       entityId: created.id,
       details: { title: created.title, assigneeAgentId: created.assigneeAgentId },
     });
-    const telemetryClient = getTelemetryClient();
-    if (telemetryClient) {
-      trackRoutineCreated(telemetryClient);
-    }
     await logRoutineRevisionCreated(req, {
       companyId,
       routineId: created.id,

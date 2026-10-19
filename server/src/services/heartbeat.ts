@@ -369,10 +369,6 @@ import {
   isNativeRunnerOwnershipHeld,
   NATIVE_OWNERSHIP_UNVERIFIED_ERROR_CODE,
 } from "./native-runtime/native-runner-ownership.js";
-import {
-  emitAgentTaskRun,
-  emitAgentTaskRunById,
-} from "./agent-task-run-telemetry.js";
 import { reportRunFailure } from "./run-failure-report.js";
 
 import { collectRunFailureSecretValues, type RunFailureReportOptions } from "./run-failure-diagnostics.js";
@@ -950,7 +946,6 @@ export function heartbeatService(
   const runDispatch = createRunDispatch(db);
   const {
     scheduleBoundedRetryForRun,
-    timerClaimWasFirstHeartbeat,
     scheduleInteractionContinuationInfrastructureRetryIfEligible,
     findSharedWorkspaceHolder,
     findExecutionWorkspaceHolder,
@@ -1004,7 +999,6 @@ export function heartbeatService(
     releaseEnvironmentLeasesForRun,
     releaseIssueExecutionAndPromote,
     finalizeAgentStatus,
-    timerClaimWasFirstHeartbeat,
     environmentsSvc,
     acknowledgeRemoteStop,
     resumeRemoteStopComments,
@@ -1062,10 +1056,6 @@ export function heartbeatService(
           effect.previousStatus !== effect.status
         ) {
           clearHeartbeatRunRuntimeStatus(effect.runId);
-          void emitAgentTaskRunById(db, {
-            runId: effect.runId,
-            companyId: effect.companyId,
-          });
         }
       }
     }
@@ -1288,7 +1278,7 @@ export function heartbeatService(
     recovery,
     companySkills,
     getRun,
-    emitTerminalAgentTaskRun,
+    settleTerminalRun,
     getIssueExecutionContext,
     budgets,
     enqueueWakeup,
@@ -1381,7 +1371,6 @@ export function heartbeatService(
     setWakeupStatus,
     appendRunEvent,
     finalizeAgentStatus,
-    timerClaimWasFirstHeartbeat,
     startNextQueuedRunForAgent,
     setRunStatus,
   });
@@ -1527,10 +1516,9 @@ export function heartbeatService(
   // status, unless the write only re-set a status the run already had (a
   // status-preserving patch, such as a livenessReason update on a run that
   // finished earlier). Only a genuine transition into a terminal status
-  // emits. The emission runs in the background: it never blocks the
-  // caller's remaining lifecycle work, because emitAgentTaskRun never
-  // throws (it logs and swallows its own failures).
-  function emitTerminalAgentTaskRun(
+  // settles. The failure report runs in the background and never blocks the
+  // caller's remaining lifecycle work.
+  function settleTerminalRun(
     updated: typeof heartbeatRuns.$inferSelect,
     previousStatus: string | null,
     failureReport?: RunFailureReportOptions,
@@ -1538,7 +1526,6 @@ export function heartbeatService(
     if (!isHeartbeatRunTerminalStatus(updated.status)) return;
     if (previousStatus === updated.status) return;
     clearHeartbeatRunRuntimeStatus(updated.id);
-    void emitAgentTaskRun(db, updated);
     void reportRunFailure(db, updated, failureReport);
   }
 
@@ -1707,7 +1694,6 @@ export function heartbeatService(
     updateRuntimeState,
     scheduleBoundedRetryForRun,
     scheduleInteractionContinuationInfrastructureRetryIfEligible,
-    timerClaimWasFirstHeartbeat,
     releaseIssueExecutionAndPromote,
     finalizeAgentStatus,
     enqueueWakeup,
@@ -3556,7 +3542,6 @@ export function heartbeatService(
               run.agentId,
               "failed",
               `native_${err.reasonCode}`,
-              { wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run) },
             ).catch(() => undefined);
           }
           return;

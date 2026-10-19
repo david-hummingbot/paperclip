@@ -89,7 +89,6 @@ import {
   readPaperclipSkillSyncPreference,
   writePaperclipSkillSyncPreference,
 } from "@paperclipai/adapter-utils/server-utils";
-import { trackAgentCreated } from "@paperclipai/shared/telemetry";
 import { validate } from "../middleware/validate.js";
 import { inheritNativeRunnerAdapterConfig } from "../services/native-runtime/native-agent-runtime-inheritance.js";
 import { agentInstructionRevisionService } from "../services/agent-instruction-revisions.js";
@@ -261,7 +260,6 @@ import {
   resolveDefaultAgentInstructionsBundleRole,
 } from "../services/default-agent-instructions.js";
 import { buildOnboardingFirstAgentInstructionsBundle } from "../services/onboarding-first-task-assets.js";
-import { getTelemetryClient } from "../telemetry.js";
 import { assertEnvironmentSelectionForCompany } from "./environment-selection.js";
 import { recoveryService } from "../services/recovery/service.js";
 import { resolveCoreTrustPreset } from "../services/trust-preset-resolver.js";
@@ -4518,10 +4516,6 @@ export function agentRoutes(
           ...(managedHireConnection?.memberConnectionIds ? { aiConnectionPoolId: managedHireConnection.connectionId, aiConnectionMemberInstallIds: managedHireConnection.memberConnectionIds } : {}),
         },
       });
-      const telemetryClient = getTelemetryClient();
-      if (telemetryClient) {
-        trackAgentCreated(telemetryClient, { agentRole: agent.role, agentId: agent.id });
-      }
 
       await applyDefaultAgentTaskAssignGrant(
         companyId,
@@ -4710,10 +4704,6 @@ export function agentRoutes(
         ...(managedConnection?.memberConnectionIds ? { aiConnectionPoolId: managedConnection.connectionId, aiConnectionMemberInstallIds: managedConnection.memberConnectionIds } : {}),
       },
     });
-    const telemetryClient = getTelemetryClient();
-    if (telemetryClient) {
-      trackAgentCreated(telemetryClient, { agentRole: agent.role, agentId: agent.id });
-    }
 
     await applyDefaultAgentTaskAssignGrant(
       companyId,

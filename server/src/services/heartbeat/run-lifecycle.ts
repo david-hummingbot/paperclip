@@ -203,7 +203,7 @@ export interface HeartbeatLifecycleDependencies extends Pick<ReturnType<typeof c
   enqueueWakeup: ReturnType<typeof createHeartbeatQueue>["enqueueWakeup"];
   getCurrentUserRedactionOptions: () => Promise<CurrentUserRedactionOptions>;
   budgetHooks: BudgetServiceHooks;
-  emitTerminalAgentTaskRun: (run: HeartbeatRun, previousStatus: string | null, failureReport?: RunFailureReportOptions) => void;
+  settleTerminalRun: (run: HeartbeatRun, previousStatus: string | null, failureReport?: RunFailureReportOptions) => void;
 }
 
 export function redactDetectedSuccessfulRunProgressSummaryForBoard(
@@ -623,7 +623,7 @@ export function createHeartbeatLifecycle(db: Db, dependencies: HeartbeatLifecycl
     recovery,
     companySkills,
     getRun,
-    emitTerminalAgentTaskRun,
+    settleTerminalRun,
     getIssueExecutionContext,
     budgets,
     enqueueWakeup,
@@ -1066,7 +1066,7 @@ export function createHeartbeatLifecycle(db: Db, dependencies: HeartbeatLifecycl
         payload: buildHeartbeatRunStatusLiveEventPayload(updated),
       });
       publishRunLifecyclePluginEvent(updated);
-      emitTerminalAgentTaskRun(updated, previousStatus?.status ?? null);
+      settleTerminalRun(updated, previousStatus?.status ?? null);
     }
 
     return updated;
@@ -1190,7 +1190,7 @@ export function createHeartbeatLifecycle(db: Db, dependencies: HeartbeatLifecycl
         payload: buildHeartbeatRunStatusLiveEventPayload(updated),
       });
       publishRunLifecyclePluginEvent(updated);
-      emitTerminalAgentTaskRun(updated, previousStatus?.status ?? null, failureReport);
+      settleTerminalRun(updated, previousStatus?.status ?? null, failureReport);
       return { run: updated, updated: true as const };
     }
 

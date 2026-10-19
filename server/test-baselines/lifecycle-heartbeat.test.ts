@@ -38,13 +38,6 @@ vi.mock("../src/adapters/index.js", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   getServerAdapter: () => ({ supportsLocalAgentJwt: false, execute }),
 }));
-vi.mock("../src/telemetry.js", () => ({
-  getTelemetryClient: () => ({
-    track: vi.fn(),
-    trackDynamic: vi.fn(),
-    hashPrivateRef: (value: string) => value,
-  }),
-}));
 import {
   heartbeatService,
   BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS,

@@ -7,10 +7,6 @@ const captureExceptionMock = vi.hoisted(() => vi.fn());
 const trackErrorHandlerCrashMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../sentry.js", () => ({ captureException: captureExceptionMock }));
-vi.mock("../telemetry.js", () => ({ getTelemetryClient: () => ({}) }));
-vi.mock("@paperclipai/shared/telemetry", () => ({
-  trackErrorHandlerCrash: trackErrorHandlerCrashMock,
-}));
 
 const principal = { actor: { type: "board", userId: "user-1" } } as unknown as McpPrincipal;
 

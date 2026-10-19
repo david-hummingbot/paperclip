@@ -30,7 +30,7 @@ function callbacks(db: Db) {
     enqueueWakeup: vi.fn<HeartbeatLifecycleDependencies["enqueueWakeup"]>(),
     getCurrentUserRedactionOptions: vi.fn(async (): Promise<CurrentUserRedactionOptions> => ({})),
     getAgentInvokability: vi.fn<HeartbeatLifecycleDependencies["getAgentInvokability"]>(async () => ({ invokable: true })),
-    emitTerminalAgentTaskRun: vi.fn<HeartbeatLifecycleDependencies["emitTerminalAgentTaskRun"]>(),
+    settleTerminalRun: vi.fn<HeartbeatLifecycleDependencies["settleTerminalRun"]>(),
     budgetHooks: {},
   } satisfies HeartbeatLifecycleDependencies;
 }
@@ -76,7 +76,7 @@ describe("heartbeat lifecycle module boundary", () => {
     const run = { runtimeMode: "native", status: "running", nativePhase: "terminal_failure", errorCode: "native_execution_ownership_unverified" } as Run;
     expect(await createHeartbeatLifecycle(database.db, deps).terminalizeRunOnLeaseRelease(run)).toBe(run);
     expect(database.access).not.toHaveBeenCalled();
-    expect(deps.emitTerminalAgentTaskRun).not.toHaveBeenCalled();
+    expect(deps.settleTerminalRun).not.toHaveBeenCalled();
   });
 
   it("rejects late progress after re-reading a terminal run through the service callback", async () => {
@@ -140,8 +140,8 @@ describe.skipIf(!support.supported)("heartbeat lifecycle database wiring", () =>
     const [persisted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
     expect(persisted.status).toBe(winner.run?.status);
     expect(results.every(result => result.run?.status === persisted.status)).toBe(true);
-    expect(deps.emitTerminalAgentTaskRun).toHaveBeenCalledTimes(1);
-    expect(deps.emitTerminalAgentTaskRun).toHaveBeenCalledWith(winner.run, "running", undefined);
+    expect(deps.settleTerminalRun).toHaveBeenCalledTimes(1);
+    expect(deps.settleTerminalRun).toHaveBeenCalledWith(winner.run, "running", undefined);
     expect(vi.mocked(publishLiveEvent).mock.calls.filter(([event]) => event.type === "heartbeat.run.status")).toHaveLength(1);
   });
 
@@ -150,7 +150,7 @@ describe.skipIf(!support.supported)("heartbeat lifecycle database wiring", () =>
     const deps = callbacks(db);
     const result = await createHeartbeatLifecycle(db, deps).setRunStatusIfRunning(run.id, "failed");
     expect(result).toMatchObject({ updated: false, run: { status: "running", errorCode: run.errorCode } });
-    expect(deps.emitTerminalAgentTaskRun).not.toHaveBeenCalled();
+    expect(deps.settleTerminalRun).not.toHaveBeenCalled();
     expect(publishLiveEvent).not.toHaveBeenCalled();
   });
 

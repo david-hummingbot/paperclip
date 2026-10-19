@@ -103,7 +103,6 @@ export interface HeartbeatRecoveryDependencies extends Pick<HeartbeatRetryDepend
   activeRunExecutionPromises: Set<Promise<void>>;
   scheduleBoundedRetryForRun: HeartbeatRetries["scheduleBoundedRetryForRun"];
   scheduleInteractionContinuationInfrastructureRetryIfEligible: HeartbeatRetries["scheduleInteractionContinuationInfrastructureRetryIfEligible"];
-  timerClaimWasFirstHeartbeat: HeartbeatRetries["timerClaimWasFirstHeartbeat"];
   executeRun: (runId: string, options?: {
     nativeLeaseOwner?: string;
     nativeRestartRecovery?: NativeRestartRecoveryClaim;
@@ -374,7 +373,6 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
     releaseEnvironmentLeasesForRun,
     releaseIssueExecutionAndPromote,
     finalizeAgentStatus,
-    timerClaimWasFirstHeartbeat,
     environmentsSvc,
     acknowledgeRemoteStop,
     resumeRemoteStopComments,
@@ -1293,9 +1291,7 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
         },
       });
 
-      await finalizeAgentStatus(run.agentId, "interrupted", message, {
-        wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-      });
+      await finalizeAgentStatus(run.agentId, "interrupted", message);
       interruptedRunIds.push(interrupted.id);
     }));
     for (const [index, settlement] of settlements.entries()) {
@@ -1890,11 +1886,6 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
       input.succeeded
         ? null
         : (settledRun?.error ?? "native_workspace_sync_out_failed"),
-      {
-        wasFirstHeartbeat: settledRun
-          ? timerClaimWasFirstHeartbeat(settledRun)
-          : undefined,
-      },
     ).catch(() => undefined);
   }
 
@@ -2447,9 +2438,7 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
         },
       });
 
-      await finalizeAgentStatus(run.agentId, "failed", baseMessage, {
-        wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-      });
+      await finalizeAgentStatus(run.agentId, "failed", baseMessage);
       await startNextQueuedRunForAgent(run.agentId);
       runningProcesses.delete(run.id);
       reaped.push(run.id);

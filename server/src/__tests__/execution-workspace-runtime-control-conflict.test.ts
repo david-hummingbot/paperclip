@@ -31,7 +31,6 @@ const mockSecretService = vi.hoisted(() => ({ normalizeEnvBindingsForPersistence
 const mockProjectService = vi.hoisted(() => ({ getById: vi.fn() }));
 const mockHeartbeatService = vi.hoisted(() => ({}));
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockAssertCanManageExecutionWorkspaceRuntimeServices = vi.hoisted(() => vi.fn());
 const mockAssertCanManageProjectWorkspaceRuntimeServices = vi.hoisted(() => vi.fn());
 const mockStartRuntimeServices = vi.hoisted(() => vi.fn());
@@ -51,7 +50,6 @@ vi.mock("node:child_process", async () => ({
   spawn: mockSpawn,
 }));
 
-vi.mock("../telemetry.js", () => ({ getTelemetryClient: mockGetTelemetryClient }));
 
 vi.mock("../services/index.js", () => ({
   accessService: () => mockAccessService,

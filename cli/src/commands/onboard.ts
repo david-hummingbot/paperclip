@@ -48,11 +48,6 @@ import {
 import { bootstrapCeoInvite } from "./auth-bootstrap-ceo.js";
 import { printPaperclipCliBanner } from "../utils/banner.js";
 import {
-  getTelemetryClient,
-  trackInstallStarted,
-  trackInstallCompleted,
-} from "../telemetry.js";
-import {
   handleOnboardService,
   handoffToOnboardedService,
   shouldOfferForegroundStart,
@@ -549,8 +544,6 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
     setupMode = setupModeChoice as SetupMode;
   }
 
-  const tc = getTelemetryClient();
-  if (tc) trackInstallStarted(tc);
 
   let llm: PaperclipConfig["llm"] | undefined;
   const { defaults: derivedDefaults, usedEnvKeys, ignoredEnvKeys } = quickstartDefaultsFromEnv({
@@ -727,9 +720,6 @@ export async function onboard(opts: OnboardOptions): Promise<void> {
     invalidBackupPath,
   });
 
-  if (tc) trackInstallCompleted(tc, {
-    adapterType: server.deploymentMode,
-  });
 
   p.note(
     [

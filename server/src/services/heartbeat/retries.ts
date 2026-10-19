@@ -105,7 +105,7 @@ export interface HeartbeatRetryDependencies {
     agentId: string,
     outcome: "succeeded" | "interrupted" | "failed" | "cancelled" | "timed_out",
     failureReason?: string | null,
-    options?: { keepIdleOnFailure?: boolean; wasFirstHeartbeat?: boolean },
+    options?: { keepIdleOnFailure?: boolean },
   ) => Promise<void>;
   getWorktreeExecutionCutoff: () => Promise<Date | null>;
   applyRunDispatchPostCommitEffects: (effects: PostCommitEffect[]) => void;
@@ -1476,7 +1476,7 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
       try {
         if (cancelledRun && !scheduled) await releaseIssueExecutionAndPromote(cancelledRun);
       } finally {
-        await finalizeAgentStatus(run.agentId, "cancelled", null, { wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run) });
+        await finalizeAgentStatus(run.agentId, "cancelled", null);
       }
     }
   }
@@ -1598,9 +1598,7 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
       );
     }
 
-    await finalizeAgentStatus(run.agentId, "cancelled", null, {
-      wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-    }).catch(() => undefined);
+    await finalizeAgentStatus(run.agentId, "cancelled", null).catch(() => undefined);
   }
 
   async function scheduleInteractionContinuationInfrastructureRetryIfEligible(
@@ -1879,17 +1877,8 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
     };
   }
 
-  function timerClaimWasFirstHeartbeat(
-    run: Pick<typeof heartbeatRuns.$inferSelect, "contextSnapshot">,
-  ): true | undefined {
-    return parseObject(run.contextSnapshot).timerClaimWasFirstHeartbeat === true
-      ? true
-      : undefined;
-  }
-
   return {
     scheduleBoundedRetryForRun,
-    timerClaimWasFirstHeartbeat,
     scheduleInteractionContinuationInfrastructureRetryIfEligible,
     findSharedWorkspaceHolder,
     findExecutionWorkspaceHolder,
