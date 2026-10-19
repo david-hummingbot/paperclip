@@ -17,6 +17,11 @@ import type { companySkillService } from "../company-skills.js";
 import { connectionIntentService } from "../connection-intents.js";
 import { prepareConnectionInstructionDelivery } from "../connection-instructions.js";
 import { applyConnectorSkills, prepareConnectorSkillDelivery, resolveConnectorAssignments } from "../connector-runtime.js";
+import {
+  applyHarnessProviderConnection,
+  applyProviderConnectionToConfig,
+  resolveAgentProviderConnection,
+} from "../provider-connection-runtime.js";
 import { resolveManagedGitHubIdentitySelection } from "../git-credentials.js";
 import { resolveAssignedConnectionInstructionsForRun } from "../native-runtime/assigned-mcp-tools.js";
 import { recordFailedSkillPreparation, type NativeRunHistoricalSpan } from "../native-runtime/native-run-trace.js";
@@ -297,6 +302,42 @@ export async function prepareHeartbeatExecutionConfiguration(db: Db, input: Hear
     resolve: () => resolveAssignedConnectionInstructionsForRun(db, { companyId: agent.companyId, agentId: agent.id, runId: run.id }),
     context, config: connectorDelivery.config, native: agent.adapterType === "paperclip_runner",
   }));
+  // An agent bound to a provider connection gets the resolved endpoint — base
+  // URL, wire format, headers and the secret-store key value — on its runtime
+  // config just before dispatch. Agents without one are untouched, so no
+  // existing config changes shape. The key lives only on this in-memory object;
+  // it is never persisted back onto the agent.
+  //
+  // A managed AI connection is a second, competing source of credentials, and
+  // it already owns the run env. When one is bound the provider connection is
+  // skipped entirely rather than layered on top of it.
+  const runProviderConnection = aiBinding
+    ? null
+    : await resolveAgentProviderConnection(db, {
+        companyId: agent.companyId,
+        agentId: agent.id,
+        runId: run.id,
+      });
+  runtimeConfig = applyProviderConnectionToConfig(runtimeConfig, runProviderConnection);
+  // A CLI harness gets the same connection as env instead, so a local or
+  // gateway model drives a real coding harness with this agent's usual tools,
+  // skills, workspace and permissions.
+  const harnessInjection = applyHarnessProviderConnection(runtimeConfig, {
+    adapterType: agent.adapterType,
+    connection: runProviderConnection,
+  });
+  runtimeConfig = harnessInjection.config;
+  if (harnessInjection.skipped) {
+    // Not fatal: the agent runs on its normal credentials. Recording why keeps
+    // a mismatched adapter and connection from looking like the connection was
+    // simply ignored.
+    await appendRunEvent(run, {
+      eventType: "lifecycle",
+      stream: "system",
+      level: "warn",
+      message: `Provider connection not applied: ${harnessInjection.skipped}`,
+    });
+  }
   const agentIdentity = supportsManagedAgentIdentity(agent.adapterType, agent.adapterConfig, run.runtimeMode === "native" ? run.driverKind : undefined)
     ? await time("configuration_agent_identity", () => agentIdentityService(db).ensureAgentIdentity(agent.companyId, agent.id))
     : undefined;

@@ -1,10 +1,12 @@
 import { nativeExecutionUsesTaskWorkspace } from "./external-provider.js";
+import { coordinationRoomWorkspaceService } from "../coordination-room-workspace.js";
 import { readGitCacheRestoration } from "../git-workspace-restoration.js";
 import { createHeartbeatPreparationTiming } from "./preparation-timing.js";
 import {
   resolveWorkspaceAfterLowTrustPreflight,
   WorkspaceValidationFailure,
   stripHostWorkspaceProvision,
+  pinRoomWorktreeWorkspaceStrategy,
   assertGitWorktreeBaseWorkspaceReady,
   buildEffectiveRunWorkspaceConfigMetadata,
   resolveExecutionWorkspaceConfigFreshness,
@@ -203,6 +205,27 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
     resolvedInstanceSettings,
   } = input.environment;
   const { mergedConfig, configSnapshot, secretManifest } = input.config;
+  // A coordination-room wake runs in this member's own tree inside the room's
+  // shared checkout, so two members can hold uncommitted work at once. The room
+  // id rides on the wake's context snapshot; a member with no usable tree
+  // resolves to null and the run falls through to the agent's ordinary cwd
+  // rather than failing.
+  const coordinationRoomId = readNonEmptyString(context.coordinationRoomId);
+  const roomMemberWorktree = coordinationRoomId
+    ? await coordinationRoomWorkspaceService(db)
+        .findMemberWorktree({
+          companyId: agent.companyId,
+          roomId: coordinationRoomId,
+          agentId: agent.id,
+        })
+        .catch((err) => {
+          logger.warn(
+            { err, roomId: coordinationRoomId, agentId: agent.id, runId: run.id },
+            "failed to resolve coordination room worktree",
+          );
+          return null;
+        })
+    : null;
   const {
     requestedShouldReuseExisting,
     existingExecutionWorkspace,
@@ -287,6 +310,25 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
           },
         });
       }
+      if (roomMemberWorktree) {
+        return {
+          cwd: roomMemberWorktree.worktreePath,
+          // The room supplies this cwd and the transcript scopes the session,
+          // which is what keeps a member's room tree distinct from their
+          // primary-repo review checkout.
+          source: "task_session" as const,
+          projectId: null,
+          workspaceId: null,
+          repoUrl: null,
+          repoRef: roomMemberWorktree.branchName,
+          workspaceHints: [],
+          warnings: [],
+          baseCwdFallback: false,
+          materializationFailures: [],
+          additionalWorkspaces: [],
+          referencedProjectFailures: [],
+        };
+      }
       if (nativeChatWorkspaceScope && !nativeChatWorkspaceScope.projectId) {
         const cwd = await materializeNativeChatTaskRoot(
           nativeChatWorkspaceScope,
@@ -366,10 +408,13 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
   }));
   const skipHostProvision = copyOnlyProvisioning || hostProvisionDriver === "sandbox" || hostProvisionDriver === "ssh";
   const hostExecutionWorkspaceConfig = isDotRun ? {} :
-    stripHostWorkspaceProvision({
-      config: mergedConfig,
-      skipHostProvision,
-    });
+    pinRoomWorktreeWorkspaceStrategy(
+      stripHostWorkspaceProvision({
+        config: mergedConfig,
+        skipHostProvision,
+      }),
+      roomMemberWorktree !== null,
+    );
   const executionWorkspaceBase = {
     baseCwd: resolvedWorkspace.cwd,
     source: resolvedWorkspace.source,

@@ -11473,7 +11473,13 @@ async function createRunnerdBackendWithinSessionClaim(
           spec: remoteTarget.spec,
           defaultCwd: remoteTarget.remoteCwd,
         })
-      : remoteTarget.runner
+      : // A docker target carries no provider runner. The native runtime needs
+        // one, so a docker container is not eligible for the native path and
+        // falls to the `runner_transport_ineligible` guard below rather than
+        // silently running somewhere else.
+        remoteTarget.transport === "docker"
+        ? null
+        : remoteTarget.runner
     : null;
   if (remoteTarget && !remoteCommandRunner) {
     throw new Error(
@@ -12470,7 +12476,10 @@ async function createRunnerdBackendWithinSessionClaim(
         // this invocation's isolated Codex auth/config. The later launch must
         // still stage those fresh files even when history was already restored.
         // Launch material is never recovered from a failover backup.
-        if (remoteTarget && remoteCommandRunner) {
+        // A non-null runner already implies a non-docker transport, but the
+        // narrowing is restated so the staging call's `"sandbox" | "ssh"`
+        // contract is checked rather than assumed.
+        if (remoteTarget && remoteCommandRunner && remoteTarget.transport !== "docker") {
           await stageRemoteLaunchAssets({
             root,
             transport: remoteTarget.transport,

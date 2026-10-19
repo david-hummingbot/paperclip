@@ -124,3 +124,8 @@ export const sessionCodec: AdapterSessionCodec = {
 export { decideCodexAuthMerge } from "./codex-auth-merge-decision.js";
 
 export { copyBackCodexAuth } from "./codex-auth-copyback.js";
+
+// Exported so the server can prove the provider-connection env it generates is
+// the shape this harness actually parses, rather than only the shape the
+// server believes it emits.
+export { prepareCodexRuntimeConfig } from "./runtime-config.js";

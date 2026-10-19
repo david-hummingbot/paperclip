@@ -3,6 +3,7 @@ import { agentHarnessType, type AgentRunnerChoice } from "@paperclipai/shared";
 import { resolveNewAgentRunnerForCompany } from "../services/agent-runner-selection.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle } from "../services/agent-lifecycle.js";
+import { withPrimaryRepoConflict } from "../services/agents.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
 import { aiConnectionRouterService, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
@@ -577,6 +578,8 @@ export function agentRoutes(
   const router = Router();
   const svc = agentService(db, { cancelWorkForScope: scope => heartbeat.cancelBudgetScopeWork(scope) });
   const svcLifecycle = createAgentLifecycle(db, { cancelWorkForScope: scope => heartbeat.cancelBudgetScopeWork(scope) });
+
+
   const access = accessService(db);
   const approvalsSvc = approvalService(db);
   const budgets = budgetService(db);
@@ -4652,7 +4655,7 @@ export function agentRoutes(
 
     const managedBinding = normalizedRuntimeConfig.aiConnection ? aiRuntimeConnectionBindingSchema.parse(normalizedRuntimeConfig.aiConnection) : undefined;
     const managedConnection = managedBinding ? await validateManagedAgentBinding(req, companyId, agentId, createInput.adapterType, normalizedAdapterConfig, managedBinding, createInput.defaultEnvironmentId, false, true) : undefined;
-    const createdAgent = await svcLifecycle.requestHire(
+    const createdAgent = await withPrimaryRepoConflict(createInput.primaryRepoFullName, () => svcLifecycle.requestHire(
       companyId,
       {
         id: agentId,
@@ -4677,7 +4680,7 @@ export function agentRoutes(
             req.actor.type !== "agent" && createApplyStoredClaudeLogin === true,
         },
       },
-    );
+    ));
     const onboardingFirstAgentBundle = await resolveOnboardingFirstAgentBundle({
       onboardingFirstAgent: createOnboardingFirstAgent,
       actorType: req.actor.type,
@@ -5422,9 +5425,11 @@ export function agentRoutes(
       },
     };
     const command = requestedStatus === "paused" ? "pause" : requestedStatus === "idle" ? "resume" : requestedStatus === "terminated" ? "terminate" : null;
-    const agent = command
-      ? await svcLifecycle.updateAndTransition(id, command, patchData, updateOptions)
-      : await svc.update(id, patchData, updateOptions);
+    const agent = await withPrimaryRepoConflict(patchData.primaryRepoFullName, () =>
+      command
+        ? svcLifecycle.updateAndTransition(id, command, patchData, updateOptions)
+        : svc.update(id, patchData, updateOptions),
+    );
     if (!agent) {
       res.status(404).json({ error: "Agent not found" });
       return;

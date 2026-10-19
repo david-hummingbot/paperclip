@@ -334,6 +334,30 @@ export function buildExecutionWorkspaceConfigSnapshot(
   return hasSnapshot ? snapshot : null;
 }
 
+/**
+ * Pins a room run's workspace strategy so realization leaves the member's tree
+ * alone.
+ *
+ * On a coordination-room wake the run's cwd is already the member's own
+ * worktree inside the room's checkout. Leaving the agent's own `git_worktree`
+ * strategy in place would make `realizeExecutionWorkspace` cut a *second*
+ * worktree from it — a nested tree under `<memberTree>/.paperclip/worktrees/` —
+ * and move the run onto an issue-named branch instead of the branch the room
+ * gave this member. Both members would then be working somewhere other than the
+ * trees the room created for them.
+ *
+ * Pinning the type also takes the run past `assertGitWorktreeBaseWorkspaceReady`,
+ * which refuses `git_worktree` when the base has no project — a room workspace
+ * has none by design.
+ */
+export function pinRoomWorktreeWorkspaceStrategy(
+  config: Record<string, unknown>,
+  hasRoomWorktree: boolean,
+): Record<string, unknown> {
+  if (!hasRoomWorktree) return config;
+  return { ...config, workspaceStrategy: { type: "project_primary" } };
+}
+
 export function stripHostWorkspaceProvision(input: {
   config: Record<string, unknown>;
   skipHostProvision: boolean;

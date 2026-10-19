@@ -320,4 +320,31 @@ describe("prepareOpenCodeRuntimeConfig", () => {
     expect(prepared.notes).toEqual([]);
     await prepared.cleanup();
   });
+
+  it("still wires the provider when permissions are opted out", async () => {
+    // The opt-out is about permissions. Dropping the provider too would leave
+    // the configured `provider/model` ref unresolvable, so the run would fail
+    // outright instead of merely prompting.
+    const configHome = await makeConfigHome({ permission: { bash: "ask" } });
+    const prepared = await prepareOpenCodeRuntimeConfig({
+      env: {
+        XDG_CONFIG_HOME: configHome,
+        PAPERCLIP_OPENCODE_PROVIDERS: JSON.stringify({
+          gateway: { npm: "@ai-sdk/openai-compatible", options: { baseURL: "http://x/v1" } },
+        }),
+      },
+      config: { dangerouslySkipPermissions: false, model: "gateway/some-model" },
+    });
+    cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+    const runtimeConfig = JSON.parse(
+      await fs.readFile(path.join(prepared.env.XDG_CONFIG_HOME, "opencode", "opencode.json"), "utf8"),
+    ) as Record<string, any>;
+
+    expect(runtimeConfig.provider.gateway.options.baseURL).toBe("http://x/v1");
+    expect(runtimeConfig.provider.gateway.models).toHaveProperty("some-model");
+    // The operator's permissions survive untouched.
+    expect(runtimeConfig.permission).toEqual({ bash: "ask" });
+    await prepared.cleanup();
+  });
 });

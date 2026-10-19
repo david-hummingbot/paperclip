@@ -6,6 +6,7 @@ import { agents, agentConfigRevisions, agentApiKeys, heartbeatRuns } from "@pape
 import { isUuidLike, normalizeAgentApiKeyScope, normalizeAgentUrlKey, type AgentApiKeyScope } from "@paperclipai/shared";
 
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { isUniqueViolation } from "../db-errors.js";
 
 import { normalizeAgentPermissions } from "../lib/agent-permissions.js";
 
@@ -19,6 +20,42 @@ import {
 import { createAgentLifecycle } from "./agent-lifecycle.js";
 
 export { hasAgentShortnameCollision, deduplicateAgentName } from "../lib/agent-records.js";
+
+/**
+ * The unique index behind `findByPrimaryRepos`.
+ *
+ * It is the authority on "one agent per repo" rather than a read-then-write
+ * check, which would race two concurrent claims. The routes translate its
+ * violation into a 409; see `agentPrimaryRepoConflict`.
+ */
+export const PRIMARY_REPO_UNIQUE_CONSTRAINT = "agents_company_primary_repo_uniq";
+
+/**
+ * Runs an agent write, turning the primary-repo unique violation into a 409
+ * that names the repo.
+ *
+ * The index is the authority rather than a read-then-write check, which would
+ * race two concurrent claims. This only maps its violation onto a status; the
+ * routes wrap their writes with it, because agent create and update live in the
+ * lifecycle module and move more often than the HTTP layer does.
+ */
+export async function withPrimaryRepoConflict<T>(
+  repo: unknown,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (!isUniqueViolation(err, PRIMARY_REPO_UNIQUE_CONSTRAINT)) throw err;
+    throw conflict(
+      `Another agent already owns ${typeof repo === "string" ? repo : "that repository"}.`,
+      {
+        code: "agent_primary_repo_taken",
+        primaryRepoFullName: typeof repo === "string" ? repo : null,
+      },
+    );
+  }
+}
 
 export function agentService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
   const {
@@ -276,6 +313,26 @@ export function agentService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
         return { agent: null, ambiguous: true } as const;
       }
       return { agent: null, ambiguous: false } as const;
+    },
+    /**
+     * Agents whose primary repo is one of `repoFullNames`.
+     *
+     * The repo→agent binding lives on the agent, so a caller that needs "who
+     * owns these repos" — room member seeding, the board's repo column — reads
+     * it from here rather than restating the query. The unique index means each
+     * repo contributes at most one agent.
+     */
+    findByPrimaryRepos: async (companyId: string, repoFullNames: readonly string[]) => {
+      if (repoFullNames.length === 0) return [];
+      return db
+        .select({ id: agents.id, name: agents.name, primaryRepoFullName: agents.primaryRepoFullName })
+        .from(agents)
+        .where(
+          and(
+            eq(agents.companyId, companyId),
+            inArray(agents.primaryRepoFullName, [...repoFullNames]),
+          ),
+        );
     },
     update: updateAgent,
     remove: (id: string) => createAgentLifecycle(db, budgetHooks).purgeAgent(id),

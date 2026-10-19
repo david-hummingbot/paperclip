@@ -78,7 +78,11 @@ export async function readRemoteCodexModelCliVersion(input: {
   try {
     const runner = target.transport === "ssh"
       ? createNativeSshCommandRunner({ spec: target.spec, defaultCwd: target.remoteCwd })
-      : target.runner;
+      : // A docker target carries no provider runner, so it is not eligible for
+        // the native path and falls to the null guard below.
+        target.transport === "docker"
+        ? null
+        : target.runner;
     if (!runner) return null;
     const executable = await discoverRemoteExecutable(runner, target.remoteCwd, "codex");
     if (!executable) return null;
