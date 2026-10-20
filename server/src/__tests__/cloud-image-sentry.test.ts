@@ -26,9 +26,9 @@ import { describe, expect, it } from "vitest";
  * `server/package.json` at build time, so the version has one committed
  * home. This test pins the invariants that nothing else ties together:
  * every Dockerfile instruction that installs `@sentry/node` sits strictly
- * after the `production` stage body ends; the Dockerfile and the docker
- * workflow carry no literal version pin (they read the version from
- * `server/package.json` at build time instead); the `cloud-server-deps`
+ * after the `production` stage body ends; the Dockerfile carries no literal
+ * version pin (it reads the version from `server/package.json` at build time
+ * instead); the `cloud-server-deps`
  * stage declares the `CLOUD_BUNDLED_SERVER_DEPS` build argument with a
  * default that names `@sentry/node`; and no committed manifest re-declares the
  * version.
@@ -36,7 +36,6 @@ import { describe, expect, it } from "vitest";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
 const serverPackageJson = JSON.parse(
   readFileSync(path.join(repoRoot, "server", "package.json"), "utf8"),
 ) as { peerDependencies?: Record<string, string> };
@@ -136,7 +135,6 @@ describe("cloud image Sentry install", () => {
 
     for (const source of [
       { label: "Dockerfile", text: dockerfile },
-      { label: "docker workflow", text: workflow },
     ]) {
       for (const match of source.text.matchAll(versionPinPattern)) {
         expect(

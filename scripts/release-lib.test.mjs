@@ -6,13 +6,15 @@ import { join } from "node:path";
 import test from "node:test";
 
 const repoRoot = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
-const releaseWorkflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
+// These were NPM_PUBLISH_VERIFY_ATTEMPTS and NPM_PUBLISH_VERIFY_DELAY_SECONDS
+// in .github/workflows/release.yml. This fork removed its workflows, so the
+// values are pinned here. They are the publish-verification budget the tests
+// below drive release-lib.sh with; they do not describe any live CI job.
+const VERIFY_ATTEMPTS = 180;
+const VERIFY_DELAY_SECONDS = 10;
 
 function workflowVerifyBudget() {
-  return {
-    verifyAttempts: Number(releaseWorkflow.match(/^  NPM_PUBLISH_VERIFY_ATTEMPTS: "(\d+)"$/m)?.[1]),
-    verifyDelaySeconds: Number(releaseWorkflow.match(/^  NPM_PUBLISH_VERIFY_DELAY_SECONDS: "(\d+)"$/m)?.[1]),
-  };
+  return { verifyAttempts: VERIFY_ATTEMPTS, verifyDelaySeconds: VERIFY_DELAY_SECONDS };
 }
 
 function writeExecutable(path, body) {
@@ -393,16 +395,4 @@ test("the workflow budget fails closed after the last registry check", () => {
   assert.equal(result.calls.match(/^pnpm publish /gm)?.length, 1);
   assert.equal(result.calls.match(/^npm view /gm)?.length, budget.verifyAttempts);
   assert.equal(result.calls.match(/^sleep /gm)?.length, budget.verifyAttempts - 1);
-});
-
-test("every publish job budgets for build time and four delayed packages", () => {
-  const { verifyAttempts, verifyDelaySeconds } = workflowVerifyBudget();
-  const pollingSeconds = (verifyAttempts - 1) * verifyDelaySeconds;
-  const requiredSeconds = 30 * 60 + 4 * pollingSeconds;
-
-  for (const job of ["publish_canary", "publish_nightly", "publish_beta", "publish_stable"]) {
-    const body = releaseWorkflow.split(`\n  ${job}:\n`)[1]?.split(/\n  [a-z_]+:\n/)[0] ?? "";
-    const timeoutMinutes = Number(body.match(/^    timeout-minutes: (\d+)$/m)?.[1]);
-    assert.ok(timeoutMinutes * 60 > requiredSeconds, `${job} must leave time beyond build and polling`);
-  }
 });

@@ -36,8 +36,11 @@ walk(repoRoot, (filePath) => {
   }
 });
 
+// This fork ships no GitHub Actions workflows, so the directory is normally
+// absent. Keep the scan so the policy still covers workflows if any are
+// added back, but do not fail the check when there are none to read.
 const workflowRoot = path.join(repoRoot, ".github", "workflows");
-walk(workflowRoot, (filePath) => {
+if (fs.existsSync(workflowRoot)) walk(workflowRoot, (filePath) => {
   if (!/\.ya?ml$/.test(filePath)) return;
   const source = fs.readFileSync(filePath, "utf8");
   for (const match of source.matchAll(/node-version:\s*["']?([^\s"'#]+)/g)) {

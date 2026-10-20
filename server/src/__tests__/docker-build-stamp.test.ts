@@ -14,14 +14,12 @@ import { describe, expect, it } from "vitest";
  * before the server build; the production ARG alone stamps nothing, because
  * the server build already ran in the earlier stage.
  *
- * This guard fails if a refactor drops the build-stage ARG, moves it after the
- * server build, or removes the build-arg the docker workflow passes.
+ * This guard fails if a refactor drops the build-stage ARG or moves it after
+ * the server build.
  */
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "docker.yml"), "utf8");
-const previewWorkflow = readFileSync(path.join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
 
 /**
  * Return the text of the Dockerfile stage that starts at the named target.
@@ -68,12 +66,6 @@ describe("docker build-stamp wiring", () => {
     ).toBeLessThan(serverBuildIdx);
   });
 
-  it("passes PAPERCLIP_BUILD_COMMIT as a build-arg for standard and explicit preview builds", () => {
-    for (const [name, source] of [["standard", workflow], ["preview", previewWorkflow]]) {
-      expect(source, `${name} must pass the source commit into the image build`)
-        .toMatch(/^\s*PAPERCLIP_BUILD_COMMIT=\$\{\{ (?:github.sha|inputs.source_ref) \}\}$/m);
-    }
-  });
 });
 
 
@@ -122,7 +114,6 @@ describe("Standard image remote provider pack", () => {
     expect(production).toContain("gosu 65534:65534 node");
     expect(production).toContain("Object.values(manifest.payload.artifacts)");
     expect(production).toContain("PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH=/opt/paperclip-runner/provider-pack");
-    expect(workflow).toMatch(/^\s*target: production$/m);
     expect(dockerfile).not.toContain("provision-grok.mjs");
   });
 
@@ -132,6 +123,5 @@ describe("Standard image remote provider pack", () => {
     expect(cloud).not.toContain("/opt/paperclip-runner/provider-pack");
     expect(cloud).not.toContain("PAPERCLIP_RUNNER_REMOTE_PROVIDER_PACK_PATH");
     expect(dockerfile.match(/build-provider-pack\.mjs \/provider-pack/g)).toHaveLength(1);
-    expect(previewWorkflow).toMatch(/^\s*target: cloud$/m);
   });
 });

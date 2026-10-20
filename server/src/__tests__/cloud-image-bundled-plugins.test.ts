@@ -16,7 +16,6 @@ import { BUNDLED_PLUGIN_CATALOG } from "../services/bundled-plugins.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
-const workflow = readFileSync(path.join(repoRoot, ".github", "workflows", "docker.yml"), "utf8");
 
 function parseList(source: string, pattern: RegExp, label: string): string[] {
   const match = source.match(pattern);
@@ -57,24 +56,4 @@ describe("cloud image bundled plugins", () => {
     },
   );
 
-  it("pins the default image build to the production target", () => {
-    // The Dockerfile's final stage is `cloud`; without an explicit target
-    // the workflow's main build would silently publish the cloud variant
-    // to the self-hosted tags.
-    expect(workflow).toMatch(/^\s*target: production$/m);
-  });
-
-  it("throttles the docker workflow with cancel-in-progress: false", () => {
-    // Concurrency is declared at the workflow (top) level so a single group
-    // spans the whole run, and cancel-in-progress is false so an in-flight
-    // image build always finishes — a newer push only supersedes the pending
-    // slot instead of killing the build that is already publishing.
-    expect(workflow).toMatch(/^concurrency:$/m);
-    // Pin the per-ref group key: without it the block could keep
-    // cancel-in-progress: false yet lose the group that scopes serialization
-    // to a single ref, silently changing which builds queue behind each other.
-    expect(workflow).toContain("group: docker-${{ github.ref }}");
-    expect(workflow).toContain("cancel-in-progress: false");
-    expect(workflow).not.toContain("cancel-in-progress: true");
-  });
 });

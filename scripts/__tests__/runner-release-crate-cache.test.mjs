@@ -10,9 +10,6 @@ import { CACHED_PATHS, HASHED_INPUTS, REQUIRED, RUNNER_PACKAGE, computeScope, ma
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const script = path.join(repoRoot, "scripts/runner-release-crate-cache.mjs");
-const readWorkflow = (name) => readFileSync(path.join(repoRoot, ".github/workflows", name), "utf8");
-const prWorkflow = readWorkflow("pr-trusted.yml");
-const releaseWorkflow = readWorkflow("release-verify.yml");
 
 // Slice one job out of a workflow, from its two-space-indented key to the next.
 function job(workflow, name) {
@@ -277,96 +274,6 @@ test("every file the crate includes by path sits under a hashed input, so an edi
   // The crate uses every supported form today, so none of the parser's
   // branches is exercised only by the synthetic test above.
   assert.deepEqual([...forms].sort(), ["concat-manifest-dir", "concat-metavariable", "literal"]);
-});
-
-test("every PR reader restores the crate after the dependency cache and marks it before building", () => {
-  for (const [name, buildCommand] of READERS) {
-    const body = job(prWorkflow, name);
-    const positions = [RUST_RESTORE_STEP, KEY_STEP, RESTORE_STEP, MARK_STEP].map((stepName) => body.indexOf(`      - name: ${stepName}\n`));
-    assert.ok(positions.every((position) => position >= 0), `${name}: a crate cache step is missing`);
-    assert.deepEqual([...positions].sort((a, b) => a - b), positions, `${name}: the crate steps must follow the dependency restore in order`);
-    const build = body.indexOf(buildCommand);
-    assert.ok(build > positions.at(-1), `${name}: the crate must be marked before ${buildCommand}`);
-
-    const key = step(body, KEY_STEP);
-    assert.match(key, /id: runner_release_crate_key\n/, name);
-    assert.match(key, /run: echo "scope=\$\(node scripts\/runner-release-crate-cache\.mjs scope\)" >> "\$GITHUB_OUTPUT"/, name);
-
-    const restore = step(body, RESTORE_STEP);
-    assert.match(restore, /id: runner_release_crate\n/, name);
-    assertCacheStep(restore, `${name} restore`);
-    assert.doesNotMatch(restore, /actions\/cache\/save/, name);
-
-    const mark = step(body, MARK_STEP);
-    assert.match(mark, /if: \$\{\{ steps\.runner_release_crate\.outputs\.cache-hit == 'true' \}\}/, name);
-    assert.match(mark, /run: node scripts\/runner-release-crate-cache\.mjs mark-current/, name);
-  }
-  // No other job restores or saves the crate.
-  const total = prWorkflow.match(/- name: Restore the Runner release crate \(read only\)\n/g)?.length ?? 0;
-  assert.equal(total, READERS.length);
-  assert.doesNotMatch(prWorkflow, /actions\/cache\/save@/);
-});
-
-test("the Verify Paperclip Runner job restores the crate only in the lanes that build it", () => {
-  const body = job(prWorkflow, "verify_paperclip_runner");
-  const lanes = [...body.matchAll(/- lane_label: (.+)\n\s+command: (.+)\n(\s+release_crate: (true)\n)?/g)].map(([, label, , , flag]) => [label, flag === "true"]);
-  assert.deepEqual(lanes, [
-    ["static checks", false],
-    ["rust", true],
-    ["vitest 1/2", false],
-    ["vitest 2/2", true],
-  ]);
-  for (const stepName of [KEY_STEP, RESTORE_STEP]) {
-    assert.match(step(body, stepName), /if: \$\{\{ matrix\.release_crate == true \}\}/, stepName);
-  }
-  // A lane that skipped the restore has no cache-hit output, so the mark
-  // step's own condition is enough there.
-  assert.match(step(body, MARK_STEP), /if: \$\{\{ steps\.runner_release_crate\.outputs\.cache-hit == 'true' \}\}/);
-  for (const [name] of READERS.filter(([name]) => name !== "verify_paperclip_runner")) {
-    for (const stepName of [KEY_STEP, RESTORE_STEP]) {
-      assert.doesNotMatch(step(job(prWorkflow, name), stepName), /^\s+if:/m, `${name}: ${stepName} is unconditional`);
-    }
-  }
-});
-
-test("only the master Rust lane writes the crate, after a lookup, with the readers' exact path list and key", () => {
-  const body = job(releaseWorkflow, "verify_paperclip_runner");
-  const positions = ["Verify Paperclip Runner", "Warm debug dependencies for the shared Runner cache", KEY_STEP, LOOKUP_STEP, BUILD_STEP, SAVE_STEP].map((stepName) => body.indexOf(`      - name: ${stepName}\n`));
-  assert.ok(positions.every((position) => position >= 0), "a writer step is missing");
-  assert.deepEqual([...positions].sort((a, b) => a - b), positions, "the writer steps must follow the checks and the debug warm-up, in order");
-
-  for (const stepName of [KEY_STEP, LOOKUP_STEP]) {
-    assert.match(step(body, stepName), new RegExp(`if: \\$\\{\\{ ${WRITER_GATE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\}\\}`), stepName);
-  }
-  for (const stepName of [BUILD_STEP, SAVE_STEP]) {
-    assert.match(
-      step(body, stepName),
-      new RegExp(`if: \\$\\{\\{ ${WRITER_GATE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} && steps\\.runner_release_crate\\.outputs\\.cache-hit != 'true' \\}\\}`),
-      stepName,
-    );
-  }
-  assert.match(step(body, KEY_STEP), /run: echo "scope=\$\(node scripts\/runner-release-crate-cache\.mjs scope\)" >> "\$GITHUB_OUTPUT"/);
-
-  const lookup = step(body, LOOKUP_STEP);
-  assert.match(lookup, /id: runner_release_crate\n/);
-  assert.match(lookup, /uses: actions\/cache\/restore@/);
-  assertCacheStep(lookup, "writer lookup", { lookupOnly: true });
-
-  // The saved artifacts come from the readers' exact command, on a crate
-  // cleaned of the test-profile variants the lane's checks built.
-  const build = step(body, BUILD_STEP);
-  assert.match(build, /working-directory: packages\/paperclip-runner\n/);
-  assert.match(build, /set -euo pipefail\n\s+cargo clean --release --manifest-path runner\/Cargo\.toml -p paperclip-runner-core\n\s+pnpm build:binary\n/);
-  const runnerScripts = JSON.parse(readFileSync(path.join(repoRoot, RUNNER_PACKAGE, "package.json"), "utf8")).scripts;
-  assert.match(runnerScripts["build:binary"], /^cargo build --release --manifest-path runner\/Cargo\.toml --locked -p paperclip-runner-core --bin paperclip-runnerd && /);
-
-  const save = step(body, SAVE_STEP);
-  assert.match(save, /uses: actions\/cache\/save@/);
-  assertCacheStep(save, "writer save");
-
-  // The dependency cache's own writer gate is the same expression.
-  assert.match(body, new RegExp(`save-if: \\$\\{\\{ ${WRITER_GATE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\}\\}`));
-  assert.equal((releaseWorkflow.match(/actions\/cache\/save@/g) ?? []).length, 1);
 });
 
 test("the scope names the platform, the compiler and the checkout root, and survives a missing rustc", () => {
