@@ -22,7 +22,6 @@ import {
   type CompanyImportTransferCreated,
   type CompanyImportTransferDeclaration,
 } from "@paperclipai/shared/company-import-transfer";
-import { getTelemetryClient, trackCompanyImported } from "../../telemetry.js";
 import { ApiRequestError, type PaperclipApiClient } from "../../client/http.js";
 import { openUrl } from "../../client/board-auth.js";
 import {
@@ -1861,12 +1860,6 @@ export function registerCompanyCommands(program: Command): void {
               });
           if (!imported) {
             throw new Error("Import request returned no data.");
-          }
-          const tc = getTelemetryClient();
-          if (tc) {
-            const isPrivate = sourcePayload.type !== "github";
-            const sourceRef = sourcePayload.type === "github" ? sourcePayload.url : from;
-            trackCompanyImported(tc, { sourceType: sourcePayload.type, sourceRef, isPrivate });
           }
           let companyUrl: string | undefined;
           if (!ctx.json) {

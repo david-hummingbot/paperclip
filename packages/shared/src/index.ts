@@ -353,6 +353,7 @@ export {
   SELF_SERVE_MCP_RESEARCH,
 } from "./self-serve-mcp-research.js";
 export * from "./validators/status-card.js";
+export * from "./validators/coordination-room.js";
 export { appDefinitionSchema, appDefinitionsSchema, connectionMethodDefSchema } from "./validators/app-definition.js";
 export * from "./types/chat-channels.js";
 export * from "./types/chat-github.js";
@@ -473,6 +474,9 @@ export {
   GOAL_STATUSES,
   PROJECT_STATUSES,
   ENVIRONMENT_DRIVERS,
+  AGENT_COMPUTE_PLACEMENTS,
+  COMPUTE_PLACEMENT_DRIVER,
+  COORDINATION_ROOM_STATUSES,
   ENVIRONMENT_STATUSES,
   ENVIRONMENT_LEASE_STATUSES,
   ENVIRONMENT_LEASE_POLICIES,
@@ -661,6 +665,8 @@ export {
   type GoalStatus,
   type ProjectStatus,
   type EnvironmentDriver,
+  type AgentComputePlacement,
+  type CoordinationRoomStatus,
   type EnvironmentStatus,
   type EnvironmentLeaseStatus,
   type EnvironmentLeasePolicy,
@@ -2821,6 +2827,7 @@ export * from "./ai-connections.js";
 export * from "./ai-connection-router.js";
 export * from "./ai-connection-usage.js";
 export * from "./subscriptions.js";
+export * from "./provider-connections.js";
 export * from "./types/email.js";
 export * from "./validators/email.js";
 export { configureRailwaySshSchema, type ConfigureRailwaySsh, type RailwaySshSetup } from "./railway-connection.js";

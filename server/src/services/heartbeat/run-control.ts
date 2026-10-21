@@ -144,7 +144,6 @@ export interface HeartbeatRunControlDependencies extends Pick<ReturnType<typeof 
   enqueueWakeup: ReturnType<typeof createHeartbeatQueue>["enqueueWakeup"];
   startNextQueuedRunForAgent: ReturnType<typeof createHeartbeatQueue>["startNextQueuedRunForAgent"];
   sweepPendingCleanupLeases: ReturnType<typeof createHeartbeatRecovery>["sweepPendingCleanupLeases"];
-  timerClaimWasFirstHeartbeat: ReturnType<typeof createHeartbeatRetries>["timerClaimWasFirstHeartbeat"];
   wakeQueue: Pick<ReturnType<typeof createWakeQueue>, "releaseIssueExecution">;
   applyWakeQueuePostCommitEffects: (effects: WakeQueuePostCommitEffect[]) => Promise<void>;
   getSchedulingSuppression: () => Promise<{ suppressed: boolean }>;
@@ -267,7 +266,6 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
     setWakeupStatus,
     appendRunEvent,
     finalizeAgentStatus,
-    timerClaimWasFirstHeartbeat,
     startNextQueuedRunForAgent,
     setRunStatus,
   } = dependencies;
@@ -1217,9 +1215,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
         await releaseIssueExecutionAndPromote(cancelled, {
           suppressImmediateRecovery: options.suppressImmediateRecovery,
         });
-        await finalizeAgentStatus(run.agentId, "cancelled", undefined, {
-          wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-        });
+        await finalizeAgentStatus(run.agentId, "cancelled", undefined);
         await startNextQueuedRunForAgent(run.agentId);
       }
       return cancelled;

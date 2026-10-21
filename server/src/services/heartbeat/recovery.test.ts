@@ -66,7 +66,6 @@ function callbacks(db: Db) {
     activeRunExecutionPromises: new Set<Promise<void>>(),
     scheduleBoundedRetryForRun: vi.fn<HeartbeatRecoveryDependencies["scheduleBoundedRetryForRun"]>(async () => ({ outcome: "retry_exhausted", retryReason: "transient_failure", attempt: 1, maxAttempts: 0 })),
     scheduleInteractionContinuationInfrastructureRetryIfEligible: vi.fn<HeartbeatRecoveryDependencies["scheduleInteractionContinuationInfrastructureRetryIfEligible"]>(async () => null),
-    timerClaimWasFirstHeartbeat: vi.fn(() => undefined),
     executeRun: vi.fn<HeartbeatRecoveryDependencies["executeRun"]>(async () => undefined),
     scheduleNativeSessionResumeDispatch: vi.fn(),
     cancelHeartbeatNativeRun: vi.fn(async () => undefined),

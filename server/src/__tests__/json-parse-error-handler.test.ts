@@ -6,12 +6,8 @@ import { errorHandler } from "../middleware/error-handler.js";
 
 const sinks = vi.hoisted(() => ({
   captureException: vi.fn(),
-  trackErrorHandlerCrash: vi.fn(),
-  telemetryClient: {},
 }));
 vi.mock("../sentry.js", () => ({ captureException: sinks.captureException }));
-vi.mock("../telemetry.js", () => ({ getTelemetryClient: () => sinks.telemetryClient }));
-vi.mock("@paperclipai/shared/telemetry", () => ({ trackErrorHandlerCrash: sinks.trackErrorHandlerCrash }));
 
 function createApp(routeError?: Error) {
   const app = express();
@@ -50,7 +46,6 @@ describe("JSON parse error handler", () => {
     }
     expect(handler).not.toHaveBeenCalled();
     expect(sinks.captureException).not.toHaveBeenCalled();
-    expect(sinks.trackErrorHandlerCrash).not.toHaveBeenCalled();
     expect(errorResponses).toHaveLength(2);
     for (const response of errorResponses) {
       expect(response.err).toBeUndefined();
@@ -90,9 +85,6 @@ describe("JSON parse error handler", () => {
     expect(response.body).toEqual({ error: "Internal server error" });
     expect(handler).toHaveBeenCalledOnce();
     expect(sinks.captureException).toHaveBeenCalledExactlyOnceWith(error);
-    expect(sinks.trackErrorHandlerCrash).toHaveBeenCalledExactlyOnceWith(sinks.telemetryClient, {
-      errorCode: (error as Error).name,
-    });
     expect(errorResponses[0].err).toBe(error);
   });
 
@@ -102,6 +94,5 @@ describe("JSON parse error handler", () => {
     expect(response.status).toBe(403);
     expect(response.body).toEqual({ error: "Access denied" });
     expect(sinks.captureException).not.toHaveBeenCalled();
-    expect(sinks.trackErrorHandlerCrash).not.toHaveBeenCalled();
   });
 });

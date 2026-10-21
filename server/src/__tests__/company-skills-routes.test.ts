@@ -84,8 +84,6 @@ const mockCatalogService = vi.hoisted(() => ({
 }));
 
 const mockLogActivity = vi.hoisted(() => vi.fn());
-const mockTrackSkillImported = vi.hoisted(() => vi.fn());
-const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockReflectionCoachMutationGate = vi.hoisted(() => ({
   assertConsented: vi.fn(),
 }));
@@ -142,14 +140,6 @@ function registerModuleMocks() {
   vi.doMock("../services/skill-sources.js", () => ({ skillSourceService: () => mockSkillSourceService }));
   vi.doMock("../routes/authz.js", async () => vi.importActual("../routes/authz.js"));
 
-  vi.doMock("@paperclipai/shared/telemetry", () => ({
-    trackSkillImported: mockTrackSkillImported,
-    trackErrorHandlerCrash: vi.fn(),
-  }));
-
-  vi.doMock("../telemetry.js", () => ({
-    getTelemetryClient: mockGetTelemetryClient,
-  }));
 
   vi.doMock("../services/access.js", () => ({
     accessService: () => mockAccessService,
@@ -313,7 +303,6 @@ describe("company skill mutation permissions", () => {
     mockCaptureRunIdentity.mockResolvedValue({ run: { responsibleUserId: "validated-owner" } });
     mockSkillSourceService.sourceForSkill.mockResolvedValue(null);
     mockSkillSourceService.importFromUrl.mockImplementation((companyId, source) => mockCompanySkillService.importFromSource(companyId, source));
-    mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     mockCompanySkillService.importFromSource.mockResolvedValue({
       imported: [],
       warnings: [],

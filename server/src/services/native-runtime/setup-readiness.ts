@@ -94,7 +94,11 @@ async function probeRemoteNativeCodex(options: {
   const target = options.context.executionTarget;
   if (target?.kind !== "remote") throw new Error("Native setup requires the selected remote execution target.");
   const { createRemoteNativeArtifactPreparation, createRemoteRunnerProcessLauncher, stageRemoteRunnerFile, readRemoteRunnerState } = await import("./native-session-executor.js");
-  const runner = target.transport === "ssh" ? createNativeSshCommandRunner({ spec: target.spec, defaultCwd: target.remoteCwd }) : target.runner;
+  // A docker target carries no provider runner, so it is not eligible for the
+  // native path and falls to the `runner_transport_ineligible` guard below.
+  const runner = target.transport === "ssh"
+    ? createNativeSshCommandRunner({ spec: target.spec, defaultCwd: target.remoteCwd })
+    : target.transport === "docker" ? null : target.runner;
   if (!runner) throw new Error("runner_transport_ineligible: remote process runner is unavailable");
   const id = crypto.randomUUID();
   const runnerInstanceId = `setup-${id}`;

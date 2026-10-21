@@ -1,4 +1,5 @@
 import type { AgentAppearance, AgentLifecycleState, AgentLifecycleOperation } from "@paperclipai/shared";
+import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   pgTable,
@@ -8,11 +9,15 @@ import {
   integer,
   timestamp,
   jsonb,
+  check,
+  foreignKey,
   index,
   unique,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { environments } from "./environments.js";
+import { aiProviderConnections } from "./ai_provider_connections.js";
 
 export const agents = pgTable(
   "agents",
@@ -37,6 +42,26 @@ export const agents = pgTable(
     adapterConfig: jsonb("adapter_config").$type<Record<string, unknown>>().notNull().default({}),
     runtimeConfig: jsonb("runtime_config").$type<Record<string, unknown>>().notNull().default({}),
     defaultEnvironmentId: uuid("default_environment_id").references(() => environments.id, { onDelete: "set null" }),
+    /**
+     * Where this agent's runs execute. `shared` uses the project cwd on the
+     * Paperclip host (today's behaviour, and the default so existing agents
+     * are unchanged). `docker` and `ssh` mean the agent owns a machine, named
+     * by `defaultEnvironmentId`, whose `environments` row carries this agent's
+     * id. Placement is independent of which model the agent talks to.
+     */
+    computePlacement: text("compute_placement").notNull().default("shared"),
+    /**
+     * The provider endpoint this agent uses, when it uses a provider
+     * connection rather than a subscription-based managed AI connection. The
+     * composite foreign key makes a cross-company reference impossible.
+     */
+    providerConnectionId: uuid("provider_connection_id"),
+    /**
+     * The GitHub repository this agent owns review for, as `owner/name`.
+     * Review for that repo wakes this agent on its own session and its own
+     * computer; it does not require a coordination room.
+     */
+    primaryRepoFullName: text("primary_repo_full_name"),
     budgetMonthlyCents: integer("budget_monthly_cents").notNull().default(0),
     spendMonthUtc: text("spend_month_utc"),
     spentMonthlyCents: numeric("spent_monthly_cents", { precision: 24, scale: 7, mode: "number" }).notNull().default(0),
@@ -56,5 +81,24 @@ export const agents = pgTable(
     companyStatusIdx: index("agents_company_status_idx").on(table.companyId, table.status),
     companyReportsToIdx: index("agents_company_reports_to_idx").on(table.companyId, table.reportsTo),
     companyDefaultEnvironmentIdx: index("agents_company_default_environment_idx").on(table.companyId, table.defaultEnvironmentId),
+    // Unique per company, not just indexed: "which agent owns this repo" has to
+    // have one answer. Two agents claiming the same repo would make room member
+    // seeding pick both and leave review ownership undefined. Partial, so the
+    // many agents with no primary repo do not collide with each other.
+    companyPrimaryRepoUq: uniqueIndex("agents_company_primary_repo_uniq")
+      .on(table.companyId, table.primaryRepoFullName)
+      .where(sql`${table.primaryRepoFullName} is not null`),
+    computePlacementCheck: check(
+      "agents_compute_placement_check",
+      sql`${table.computePlacement} in ('shared','docker','ssh')`,
+    ),
+    // No ON DELETE action: this is a composite key and `set null` would null
+    // `company_id` too, which is NOT NULL. The provider-connection service
+    // clears `providerConnectionId` in the same transaction as the delete.
+    providerConnectionFk: foreignKey({
+      columns: [table.companyId, table.providerConnectionId],
+      foreignColumns: [aiProviderConnections.companyId, aiProviderConnections.id],
+      name: "agents_company_provider_connection_fk",
+    }),
   }),
 );

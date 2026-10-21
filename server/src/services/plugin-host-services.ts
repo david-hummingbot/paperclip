@@ -77,7 +77,6 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { logger } from "../middleware/logger.js";
-import { getTelemetryClient } from "../telemetry.js";
 import { accessService } from "./access.js";
 import {
   authorizationService,
@@ -1799,9 +1798,12 @@ export function buildHostServices(
             'Plugin telemetry event names must be lowercase slugs using letters, numbers, "_" or "-".',
           );
         }
-        const telemetryClient = getTelemetryClient();
-        if (!telemetryClient) return;
-        telemetryClient.trackDynamic(`plugin.${pluginKey}.${eventName}`, params.dimensions);
+        // This fork has no telemetry client, so the event goes nowhere. The
+        // capability is kept, and keeps validating the event name, so a
+        // third-party plugin that calls it still installs and runs instead of
+        // failing on a missing capability.
+        void pluginKey;
+        void params.dimensions;
       },
     },
 

@@ -1,4 +1,20 @@
 export {
+  repoFullNameSchema,
+  coordinationRoomStatusSchema,
+  createCoordinationRoomSchema,
+  updateCoordinationRoomSchema,
+  addCoordinationRoomMemberSchema,
+  postCoordinationRoomMessageSchema,
+  type CreateCoordinationRoom,
+  type UpdateCoordinationRoom,
+  type AddCoordinationRoomMember,
+  type PostCoordinationRoomMessage,
+  type CoordinationRoom,
+  type CoordinationRoomMember,
+  type CoordinationRoomMessageResult,
+} from "./coordination-room.js";
+
+export {
   connectionsSearchInputSchema,
   connectionRequestInputSchema,
   completeConnectionIntentSchema,

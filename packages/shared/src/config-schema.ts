@@ -99,6 +99,13 @@ export const secretsConfigSchema = z.object({
   }),
 }).passthrough();
 
+/**
+ * Accepted and ignored.
+ *
+ * This fork has no telemetry client, so nothing reads this. The key stays in
+ * the schema so an existing `paperclip.config` carrying `telemetry.enabled`
+ * keeps loading instead of becoming a surprise on upgrade.
+ */
 export const telemetryConfigSchema = z.object({
   enabled: z.boolean().default(true),
 }).passthrough().prefault({});

@@ -1,5 +1,9 @@
 import { agentAppearanceSchema } from "../agent-appearance.js";
+// Upstream's runtime binding is a union that includes the original
+// `aiConnectionBindingSchema`, so it accepts every binding an agent could
+// already carry plus the router bindings.
 import { aiRuntimeConnectionBindingSchema as aiConnectionBindingSchema } from "../ai-connection-router.js";
+import { repoFullNameSchema } from "./coordination-room.js";
 import { z } from "zod";
 import {
   AGENT_ICON_NAMES,
@@ -98,6 +102,11 @@ export const createAgentSchema = z.object({
   instructionsBundle: createAgentInstructionsBundleSchema.optional(),
   runtimeConfig: agentRuntimeConfigSchema.optional().default({}),
   defaultEnvironmentId: z.string().guid().optional().nullable(),
+  /**
+   * The GitHub repository this agent owns, as `owner/name`. Unique per company:
+   * "which agent owns this repo" must have one answer.
+   */
+  primaryRepoFullName: repoFullNameSchema.optional().nullable(),
   budgetMonthlyCents: z.number().int().nonnegative().optional().default(0),
   permissions: agentPermissionsSchema.optional(),
   metadata: z.record(z.string(), z.unknown()).optional().nullable(),

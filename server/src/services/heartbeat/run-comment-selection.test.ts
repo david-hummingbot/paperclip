@@ -34,7 +34,7 @@ describe.skipIf(!support.supported)("persisted run completion comment selection"
       treeControlSvc: { getActivePauseHoldGate: vi.fn(async () => null) },
       enqueueWakeup: vi.fn(), getCurrentUserRedactionOptions: vi.fn(async () => ({ enabled: false })),
       getAgentInvokability: vi.fn<HeartbeatLifecycleDependencies["getAgentInvokability"]>(async () => ({ invokable: true })),
-      emitTerminalAgentTaskRun: vi.fn(), budgetHooks: {},
+      settleTerminalRun: vi.fn(), budgetHooks: {},
     } satisfies HeartbeatLifecycleDependencies;
     const lifecycle = createHeartbeatLifecycle(db, dependencies);
     expect(await lifecycle.findRunIssueComment(run.id, company.id, issue.id, {})).toBeNull();

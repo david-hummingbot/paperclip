@@ -6,11 +6,15 @@ JSON on demand and renders it with native components.
 
 ## Operator configuration
 
-- `PAPERCLIP_ANNOUNCEMENTS_ENABLED=false` disables fetching and display.
+- `PAPERCLIP_ANNOUNCEMENTS_ENABLED=true` enables fetching and display. **This
+  fork is opt-in**, where upstream is opt-out: announcements poll a
+  Paperclip-hosted feed, and no outbound path here is on unless an operator
+  turned it on. Any other value, including unset, leaves them off.
 - `PAPERCLIP_ANNOUNCEMENTS_FEED_URL` overrides the public HTTPS manifest URL.
   Credentials, query strings, private destinations and redirects are rejected.
 
-Announcements are independent of telemetry. Feed/media requests originate from
+Announcements carry no telemetry — this fork has none at all (see AGENTS.md
+rule 7). Feed/media requests originate from
 the instance without account IDs, company data, cookies or event tracking. The
 host sees ordinary server network request metadata. The browser requests only
 its own Paperclip API.

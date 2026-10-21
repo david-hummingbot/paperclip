@@ -6,23 +6,12 @@ import { mcpDiscoveryHttpFailure, retainMcpConnectionFailure } from "../services
 
 const recordResponsibleUserDenialOnActiveRunMock = vi.hoisted(() => vi.fn());
 const captureExceptionMock = vi.hoisted(() => vi.fn());
-const telemetryMocks = vi.hoisted(() => ({
-  client: {},
-  trackErrorHandlerCrash: vi.fn(),
-}));
-
 vi.mock("../services/responsible-user-denial-run-outcomes.js", () => ({
   recordResponsibleUserDenialOnActiveRun:
     recordResponsibleUserDenialOnActiveRunMock,
 }));
 
 vi.mock("../sentry.js", () => ({ captureException: captureExceptionMock }));
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: () => telemetryMocks.client,
-}));
-vi.mock("@paperclipai/shared/telemetry", () => ({
-  trackErrorHandlerCrash: telemetryMocks.trackErrorHandlerCrash,
-}));
 
 function makeReq(): Request {
   return {
@@ -48,7 +37,6 @@ describe("errorHandler", () => {
     recordResponsibleUserDenialOnActiveRunMock.mockReset();
     recordResponsibleUserDenialOnActiveRunMock.mockResolvedValue(null);
     captureExceptionMock.mockReset();
-    telemetryMocks.trackErrorHandlerCrash.mockReset();
   });
 
   it("attaches the original Error to res.err for 500s", () => {
@@ -80,7 +68,6 @@ describe("errorHandler", () => {
     expect(res.end).toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
     expect(captureExceptionMock).not.toHaveBeenCalled();
-    expect(telemetryMocks.trackErrorHandlerCrash).not.toHaveBeenCalled();
   });
 
   function endedPoolQueryError() {
@@ -103,7 +90,6 @@ describe("errorHandler", () => {
     expect(res.json).toHaveBeenCalledWith({ error: "Server is shutting down" });
     expect(res.err).toBeUndefined();
     expect(captureExceptionMock).not.toHaveBeenCalled();
-    expect(telemetryMocks.trackErrorHandlerCrash).not.toHaveBeenCalled();
   });
 
   it("only ends the response when headers were already sent during database shutdown", () => {
@@ -183,7 +169,7 @@ describe("errorHandler", () => {
     expect(res.__errorContext?.error?.message).toBe("db exploded");
   });
 
-  it("keeps HTTP failures and existing telemetry for proven external MCP outages while skipping Sentry", () => {
+  it("keeps HTTP failures for proven external MCP outages while skipping Sentry", () => {
     const req = makeReq();
     const res = makeRes() as any;
     const original = mcpDiscoveryHttpFailure(new Response(null, { status: 503 }), "Remote app returned HTTP 503");
@@ -195,7 +181,6 @@ describe("errorHandler", () => {
     expect(res.json).toHaveBeenCalledWith({ error: original.message });
     expect(res.err).toBe(err);
     expect(res.__errorContext.error.message).toBe(original.message);
-    expect(telemetryMocks.trackErrorHandlerCrash).toHaveBeenCalledOnce();
     expect(captureExceptionMock).not.toHaveBeenCalled();
   });
 
@@ -209,7 +194,6 @@ describe("errorHandler", () => {
       errorHandler(err, makeReq(), makeRes(), vi.fn());
     }
     expect(captureExceptionMock).toHaveBeenCalledTimes(2);
-    expect(telemetryMocks.trackErrorHandlerCrash).toHaveBeenCalledTimes(2);
   });
 
   it("sanitizes chat setup errors before logs and crash reporting", () => {
@@ -239,13 +223,6 @@ describe("errorHandler", () => {
     expect(JSON.stringify(captureExceptionMock.mock.calls)).not.toContain(
       "setup-error-token-canary",
     );
-    expect(telemetryMocks.trackErrorHandlerCrash).toHaveBeenCalledWith(
-      telemetryMocks.client,
-      { errorCode: "Error" },
-    );
-    expect(
-      JSON.stringify(telemetryMocks.trackErrorHandlerCrash.mock.calls),
-    ).not.toContain("setup-error-token-canary");
   });
 
   it("keeps actionable setup validation details while removing submitted credentials", () => {

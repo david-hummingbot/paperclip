@@ -62,7 +62,7 @@ export interface HeartbeatRunCompletionDependencies extends Pick<RunState,
     "finalizeIssueCommentPolicy" | "handleIssueReviewPathDisposition" | "handleRunLivenessContinuation" |
     "handleSuccessfulRunHandoff" | "updateRuntimeState">,
   Pick<ReturnType<typeof createHeartbeatRetries>,
-    "scheduleBoundedRetryForRun" | "scheduleInteractionContinuationInfrastructureRetryIfEligible" | "timerClaimWasFirstHeartbeat">,
+    "scheduleBoundedRetryForRun" | "scheduleInteractionContinuationInfrastructureRetryIfEligible">,
   Pick<ReturnType<typeof createHeartbeatRunControl>, "releaseIssueExecutionAndPromote">,
   Pick<HeartbeatRetryDependencies, "finalizeAgentStatus">,
   Pick<ReturnType<typeof createHeartbeatQueue>, "enqueueWakeup"> {
@@ -364,7 +364,6 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
     updateRuntimeState,
     scheduleBoundedRetryForRun,
     scheduleInteractionContinuationInfrastructureRetryIfEligible,
-    timerClaimWasFirstHeartbeat,
     releaseIssueExecutionAndPromote,
     finalizeAgentStatus,
     enqueueWakeup,
@@ -1028,7 +1027,6 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
           ? readHeartbeatRunErrorFamily(finalizedRun) === "provider_quota"
           : runErrorCode === "provider_quota") ||
           isWorkspaceSyncConflictFailure(adapterResult.errorMessage)),
-      wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
     });
   }
 
@@ -1254,7 +1252,6 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
     }
 
     await finalizeAgentStatus(agent.id, "failed", message, {
-      wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
       keepIdleOnFailure:
         Boolean(nonRetryablePreflightFailureCode(err)) ||
         isWorkspaceSyncConflictFailure(message),
@@ -1482,7 +1479,6 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
     // the run, keep that terminal outcome authoritative.
     if (setupFailureWrite.updated) {
       await finalizeAgentStatus(run.agentId, "failed", message, {
-        wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
         // Low-trust admission failures are task/principal preconditions,
         // not evidence that the immutable endpoint agent is unhealthy.
         // Keep the failed run and its safe provider refusal authoritative,

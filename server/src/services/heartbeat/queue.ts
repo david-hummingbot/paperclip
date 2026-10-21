@@ -108,7 +108,6 @@ import {
   asNumber,
 } from "../../adapters/utils.js";
 import { isExternalChatWaitAuthorizationContention } from "../native-runtime/chat-attachment-reuse.js";
-import { emitAgentTaskRun } from "../agent-task-run-telemetry.js";
 import {
   CHAT_CONTROL_RECOVERY_ADMISSION_KEY,
   CHAT_CONTROL_RECOVERY_STOP_CODE,
@@ -1506,7 +1505,6 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       publishRunLifecyclePluginEvent(queuedCommentClaim.run);
       // Fire-and-forget: nothing else in this path depends on the emission,
       // so it must not delay the return.
-      void emitAgentTaskRun(db, queuedCommentClaim.run);
       return null;
     }
     const claimed = queuedCommentClaim
@@ -4161,7 +4159,6 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       // nor this function's return, depends on it, so a slow telemetry
       // lookup must not delay them.
       for (const cancelledRun of cancelledRunsToEmit) {
-        void emitAgentTaskRun(db, cancelledRun);
       }
 
       if (outcome.kind === "durable") {

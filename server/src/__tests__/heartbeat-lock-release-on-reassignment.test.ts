@@ -18,22 +18,7 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { drainHeartbeatRunsToQuiescence } from "./helpers/drain-heartbeat-runs.js";
 
-const mockTelemetryClient = vi.hoisted(() => ({ track: vi.fn() }));
-const mockTrackAgentTaskRun = vi.hoisted(() => vi.fn());
 
-vi.mock("../telemetry.js", () => ({
-  getTelemetryClient: () => mockTelemetryClient,
-}));
-
-vi.mock("@paperclipai/shared/telemetry", async () => {
-  const actual = await vi.importActual<typeof import("@paperclipai/shared/telemetry")>(
-    "@paperclipai/shared/telemetry",
-  );
-  return {
-    ...actual,
-    trackAgentTaskRun: mockTrackAgentTaskRun,
-  };
-});
 
 import { heartbeatService } from "../services/heartbeat.ts";
 
@@ -297,7 +282,7 @@ describeEmbeddedPostgres("heartbeat lock release on cross-agent reassignment", (
     expect(issue?.executionRunId).toBe(holderRunId);
   });
 
-  it("cancels a queued holder's run on reassignment and emits agent.task_run for it", async () => {
+  it("cancels a queued holder's run on reassignment", async () => {
     const { companyId, coderAgentId, reviewerAgentId, issueId, holderRunId } =
       await seedCrossAgentScenario({ holderStatus: "queued" });
 
@@ -346,19 +331,6 @@ describeEmbeddedPostgres("heartbeat lock release on cross-agent reassignment", (
     expect(holder).toEqual({
       status: "cancelled",
       errorCode: "lock_released_on_reassignment",
-    });
-
-    // The cancel runs inside enqueueWakeup's transaction, and the run's own
-    // required lifecycle work never awaits the telemetry emission, so wait
-    // for it here instead of asserting it fired synchronously.
-    await vi.waitFor(() => {
-      expect(mockTrackAgentTaskRun).toHaveBeenCalledWith(
-        mockTelemetryClient,
-        expect.objectContaining({
-          agentId: coderAgentId,
-          state: "cancelled",
-        }),
-      );
     });
   });
 });

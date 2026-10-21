@@ -24,6 +24,16 @@ function cacheKeyForTarget(command: string, target: AdapterExecutionTarget | nul
       command,
     ].join(":");
   }
+  if (target.transport === "docker") {
+    return [
+      "docker",
+      target.spec.containerName,
+      // The image is part of the key: re-creating the container from a
+      // different image can change which binaries resolve.
+      target.spec.image,
+      command,
+    ].join(":");
+  }
   return [
     "ssh",
     target.environmentId ?? "",
